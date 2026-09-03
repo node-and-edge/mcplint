@@ -14,11 +14,15 @@ So a tool description can just... contain an instruction. Hidden in whitespace. 
 
 `mcplint` is the dumbest possible thing that helps: read the tool list, run some plain pattern matching and a bit of `unicodedata` over it, tell you what looks wrong.
 
+## Status
+
+Early. `mcplint scan <file.json>` works end to end today, with the `injection` rule wired through. The other four rules below, the stdio loader, `pin`/`diff`, `--known-configs` and SARIF output are described here as the intended shape of the tool, but are **not implemented yet** — the sections below are the plan, not a changelog.
+
 ## What it actually checks
 
 Five checks, each in its own ~100-line file, each doing exactly one thing:
 
-- **`injection.py`** — keyword/regex matching for known instruction-hijack phrasing ("ignore previous instructions," fake role tags, "don't tell the user," etc). Not clever. Catches the lazy attacks, which — turns out — is most of them.
+- **`injection.py`** *(implemented)* — keyword/regex matching for known instruction-hijack phrasing ("ignore previous instructions," fake role tags, "don't tell the user," etc). Not clever. Catches the lazy attacks, which — turns out — is most of them.
 - **`unicode_anomaly.py`** — zero-width characters, bidi overrides, mixed scripts inside descriptions. Stuff that's invisible to you but not to the model.
 - **`schema_permissiveness.py`** — walks each tool's JSON input schema and flags free-text string params with no `enum`/`pattern`/length bound, when the param name smells dangerous (`cmd`, `path`, `url`, `script`, `query`...). This is where the command-injection and SSRF findings tend to live.
 - **`description_outliers.py`** — z-score on description length/token density relative to the rest of the server's tool list. Unusually long, instruction-dense descriptions are both a red flag and a context-budget problem.
@@ -88,6 +92,16 @@ $ mcplint scan tools.json
 
   3 findings across 12 tools. 1 high, 1 medium, 1 low.
 ```
+
+### Exit codes
+
+So it's useful in CI without extra flags:
+
+| Code | Meaning |
+|---|---|
+| `0` | scanned fine, nothing at or above `MEDIUM` |
+| `1` | at least one finding at `MEDIUM` or `HIGH` |
+| `2` | the input couldn't be read or parsed |
 
 ## Design notes, for anyone reading the source
 
