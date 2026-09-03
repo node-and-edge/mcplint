@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+from mcplint.config_scan import discover_servers
 from mcplint.core import (
     MEDIUM,
     SEVERITY_ORDER,
@@ -24,6 +25,7 @@ from mcplint.core import (
     run_all,
     save_baseline,
 )
+from mcplint.rules.config_hygiene import check_config_hygiene
 from mcplint.rules.pinning import check_against_baseline, fingerprint_tools
 from mcplint.stdio import DEFAULT_TIMEOUT_SECONDS, StdioError, load_tools_from_stdio
 
@@ -68,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="record the current tool definitions, to compare against later",
         description="Record a fingerprint of every tool, to compare against later.",
     )
-    _add_source_arguments(pin)
+    _add_source_arguments(pin, known_configs=False)
     _add_baseline_argument(pin)
 
     diff = subcommands.add_parser(
@@ -76,14 +78,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="report what changed since this server was pinned",
         description="Report tools added, removed or silently redefined since pinning.",
     )
-    _add_source_arguments(diff)
+    _add_source_arguments(diff, known_configs=False)
     _add_baseline_argument(diff)
 
     return parser
 
 
-def _add_source_arguments(subcommand: argparse.ArgumentParser) -> None:
-    """Where the tool list comes from, worded identically on every command."""
+def _add_source_arguments(subcommand: argparse.ArgumentParser, known_configs: bool = True) -> None:
+    """Where the input comes from, worded identically on every command.
+
+    `--known-configs` is offered only by `scan`: pinning or diffing a config
+    file is a different question with a different answer, and pretending
+    otherwise would put a flag on a command that could not honour it.
+    """
     subcommand.add_argument(
         "path",
         nargs="?",
@@ -102,6 +109,12 @@ def _add_source_arguments(subcommand: argparse.ArgumentParser) -> None:
         default=[],
         help="an argument for --stdio-command; repeat once per argument",
     )
+    if known_configs:
+        subcommand.add_argument(
+            "--known-configs",
+            action="store_true",
+            help="instead of a tool list, check the MCP servers configured on this machine",
+        )
     subcommand.add_argument(
         "--stdio-timeout",
         metavar="SECONDS",
@@ -128,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
     _widen_output_encoding()
     _check_source(parser, args)
 
+    if getattr(args, "known_configs", False):
+        return _scan_known_configs()
+
     try:
         tools = _load_tools(args)
     except StdioError as error:
@@ -144,12 +160,37 @@ def main(argv: list[str] | None = None) -> int:
     return _report(run_all(tools), len(tools))
 
 
+def _scan_known_configs() -> int:
+    """Check this machine's configured servers, without starting any of them."""
+    servers, sources = discover_servers()
+    if not sources:
+        print("No MCP client configuration found on this machine.")
+        return EXIT_OK
+
+    noun = "server" if len(servers) == 1 else "servers"
+    where = "file" if len(sources) == 1 else "files"
+    print(f"Found {len(servers)} configured {noun} across {len(sources)} config {where}.")
+    for source in sources:
+        print(f"  {source}")
+    print()
+
+    return _report(check_config_hygiene(servers), len(servers), subject="servers")
+
+
 def _check_source(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     """Insist on exactly one source, since argparse cannot express that here."""
-    if args.path and args.stdio_command:
-        parser.error("give a path or --stdio-command, not both")
-    if not args.path and not args.stdio_command:
-        parser.error("give a path to a tool list, or --stdio-command to ask a server")
+    chosen = [
+        bool(args.path),
+        bool(args.stdio_command),
+        bool(getattr(args, "known_configs", False)),
+    ]
+    if sum(chosen) > 1:
+        parser.error("choose one of: a path, --stdio-command, or --known-configs")
+    if not any(chosen):
+        parser.error(
+            "give a path to a tool list, --stdio-command to ask a server, "
+            "or --known-configs to check this machine's configuration"
+        )
     if args.stdio_arg and not args.stdio_command:
         parser.error("--stdio-arg has nothing to attach to without --stdio-command")
 
@@ -202,9 +243,9 @@ def _baseline_path(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     parser.error("--baseline is required when pinning or diffing a --stdio-command server")
 
 
-def _report(findings: list[Finding], tool_count: int) -> int:
+def _report(findings: list[Finding], subject_count: int, subject: str = "tools") -> int:
     """Print findings and turn the worst of them into an exit code."""
-    print(render_text(findings, tool_count))
+    print(render_text(findings, subject_count, subject))
 
     worst = max((SEVERITY_ORDER[finding.severity] for finding in findings), default=-1)
     return EXIT_FINDINGS if worst >= SEVERITY_ORDER[FAIL_ON] else EXIT_OK

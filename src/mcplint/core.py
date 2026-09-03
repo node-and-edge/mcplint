@@ -63,6 +63,11 @@ class Finding:
     message: str
     evidence_snippet: str = ""
     remediation: str = ""
+    # What `tool_name` is naming. Almost always a tool, but the config rule
+    # reports on whole servers, and printing "tool: files" for a server would
+    # be a small lie in the output of a tool whose argument is that you should
+    # be able to check its output.
+    subject_kind: str = "tool"
 
 
 # ---------------------------------------------------------------------------
@@ -215,14 +220,15 @@ def run_all(tools: list[Tool]) -> list[Finding]:
 RULE_ID_WIDTH = 20
 
 
-def render_text(findings: list[Finding], tool_count: int) -> str:
-    """Render findings grouped by tool, followed by a one-line summary."""
+def render_text(findings: list[Finding], subject_count: int, subject: str = "tools") -> str:
+    """Render findings grouped by subject, followed by a one-line summary."""
     if not findings:
-        return f"No findings across {tool_count} tools."
+        return f"No findings across {subject_count} {subject}."
 
     lines: list[str] = []
     for tool_name in _tool_order(findings):
-        lines.append(f"  tool: {visible(tool_name)}")
+        kind = next(f.subject_kind for f in findings if f.tool_name == tool_name)
+        lines.append(f"  {kind}: {visible(tool_name)}")
         for finding in findings:
             if finding.tool_name != tool_name:
                 continue
@@ -232,7 +238,7 @@ def render_text(findings: list[Finding], tool_count: int) -> str:
                 lines.append(f"  {'':<8} {'':<{RULE_ID_WIDTH}} {finding.evidence_snippet}")
         lines.append("")
 
-    lines.append(_summary(findings, tool_count))
+    lines.append(_summary(findings, subject_count, subject))
     return "\n".join(lines)
 
 
@@ -257,10 +263,10 @@ def _tool_order(findings: list[Finding]) -> list[str]:
     return seen
 
 
-def _summary(findings: list[Finding], tool_count: int) -> str:
+def _summary(findings: list[Finding], subject_count: int, subject: str = "tools") -> str:
     counts = {severity: 0 for severity in (HIGH, MEDIUM, LOW)}
     for finding in findings:
         counts[finding.severity] = counts.get(finding.severity, 0) + 1
     breakdown = ", ".join(f"{counts[level]} {level.lower()}" for level in (HIGH, MEDIUM, LOW))
     noun = "finding" if len(findings) == 1 else "findings"
-    return f"{len(findings)} {noun} across {tool_count} tools. {breakdown}."
+    return f"{len(findings)} {noun} across {subject_count} {subject}. {breakdown}."
