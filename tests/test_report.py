@@ -14,6 +14,7 @@ from mcplint.report import (
     RULE_DESCRIPTIONS,
     SARIF_LEVELS,
     SARIF_VERSION,
+    render_json,
     render_sarif,
     render_text,
     visible,
@@ -191,3 +192,56 @@ def test_every_rule_the_tool_can_emit_has_a_description(rule_id):
     # list is not missing a rule the code can actually produce.
     assert rule_id in RULE_DESCRIPTIONS
     assert RULE_DESCRIPTIONS[rule_id].endswith("."), rule_id
+
+
+# --- JSON -------------------------------------------------------------------
+
+
+def _as_json(findings, count=3, subject="tools"):
+    return json.loads(render_json(findings, count, subject))
+
+
+def test_json_carries_every_field_of_every_finding():
+    document = _as_json([_finding()])
+
+    assert document["findings"] == [
+        {
+            "rule_id": "INJECTION_PHRASE",
+            "severity": HIGH,
+            "subject": "read_file",
+            "subject_kind": "tool",
+            "message": "description contains an instruction",
+            "evidence": "...ignore previous instructions...",
+            "remediation": "Do not connect this server.",
+        }
+    ]
+
+
+def test_json_carries_the_counts_from_the_summary_line():
+    findings = [_finding(), _finding(), _finding(severity=LOW)]
+
+    document = _as_json(findings, count=9)
+
+    assert document["counts"] == {"high": 2, "medium": 0, "low": 1}
+    assert document["subject_count"] == 9
+    assert document["subject"] == "tools"
+
+
+def test_json_with_no_findings_is_still_a_document():
+    document = _as_json([])
+
+    assert document["findings"] == []
+    assert document["counts"] == {"high": 0, "medium": 0, "low": 0}
+
+
+def test_json_is_ascii_safe_like_sarif():
+    output = render_json([_finding(tool_name="fetch_ur\u043el")], 1)
+
+    assert output.isascii()
+
+
+def test_json_is_not_sarif_shaped():
+    # These are for different readers. Bending one into the other's shape would
+    # make both worse, and SARIF is not a pleasant thing to parse in a shell
+    # script on a Tuesday.
+    assert "runs" not in _as_json([_finding()])

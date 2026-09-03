@@ -24,7 +24,7 @@ from mcplint.core import (
     run_all,
     save_baseline,
 )
-from mcplint.report import render_sarif, render_text
+from mcplint.report import render_json, render_sarif, render_text
 from mcplint.rules.config_hygiene import check_config_hygiene
 from mcplint.rules.pinning import check_against_baseline, fingerprint_tools
 from mcplint.stdio import DEFAULT_TIMEOUT_SECONDS, StdioError, load_tools_from_stdio
@@ -45,7 +45,7 @@ INPUT_ERRORS = (OSError, json.JSONDecodeError, TypeError, ValueError)
 
 # How findings can be printed. Text is what a person reads; the other two exist
 # so that something other than a person can read them without parsing text.
-FORMATS = ("text", "sarif")
+FORMATS = ("text", "json", "sarif")
 DEFAULT_FORMAT = "text"
 
 
@@ -280,6 +280,8 @@ def _report(
     chosen = getattr(args, "format", DEFAULT_FORMAT)
     if chosen == "sarif":
         print(render_sarif(findings, source or _source_label(args)))
+    elif chosen == "json":
+        print(render_json(findings, subject_count, subject))
     else:
         print(render_text(findings, subject_count, subject))
 

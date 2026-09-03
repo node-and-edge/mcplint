@@ -5,14 +5,15 @@ that split is what keeps rules independently testable -- it is also why "no
 rule can make a network call" is a claim you can check rather than one you have
 to believe.
 
-Two formats, one function each:
+Three formats, one function each:
 
     render_text()   what you read in a terminal
+    render_json()   what a script reads
     render_sarif()  what GitHub code scanning reads
 
-The text renderer is the one that matters; the other is serialisation with no
-opinions in it. Both take the same `list[Finding]` and neither can change what
-was found.
+The text renderer is the one that matters; the other two are serialisation
+with no opinions in them. All three take the same `list[Finding]` and none of
+them can change what was found.
 
 One thing worth knowing about SARIF: it wants a description for every rule it
 sees, and the only place those could live is a table in this file. A table like
@@ -220,3 +221,39 @@ def _sarif_message(finding: Finding) -> str:
     if finding.remediation:
         parts.append(finding.remediation)
     return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# JSON — what a script reads
+# ---------------------------------------------------------------------------
+
+
+def render_json(findings: list[Finding], subject_count: int, subject: str = "tools") -> str:
+    """Render findings as plain JSON, with the counts the summary line carries.
+
+    Deliberately not SARIF-shaped. SARIF exists to be consumed by one
+    particular family of tools and reads like it; this is for the shell script
+    somebody writes on a Tuesday.
+    """
+    document = {
+        "version": __version__,
+        "subject": subject,
+        "subject_count": subject_count,
+        "counts": {
+            severity.lower(): sum(1 for f in findings if f.severity == severity)
+            for severity in (HIGH, MEDIUM, LOW)
+        },
+        "findings": [
+            {
+                "rule_id": finding.rule_id,
+                "severity": finding.severity,
+                "subject": finding.tool_name,
+                "subject_kind": finding.subject_kind,
+                "message": finding.message,
+                "evidence": finding.evidence_snippet,
+                "remediation": finding.remediation,
+            }
+            for finding in findings
+        ],
+    }
+    return json.dumps(document, indent=2, ensure_ascii=True)
