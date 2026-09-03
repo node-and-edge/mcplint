@@ -6,7 +6,12 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Absolute path to the file." }
+          "path": {
+            "type": "string",
+            "description": "Absolute path to the file.",
+            "pattern": "^/[A-Za-z0-9._/-]+$",
+            "maxLength": 4096
+          }
         },
         "required": ["path"]
       }
@@ -17,7 +22,12 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Directory to list." }
+          "path": {
+            "type": "string",
+            "description": "Directory to list.",
+            "pattern": "^/[A-Za-z0-9._/-]*$",
+            "maxLength": 4096
+          }
         },
         "required": ["path"]
       }
@@ -28,7 +38,12 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "url": { "type": "string", "description": "The URL to fetch." }
+          "url": {
+            "type": "string",
+            "description": "The URL to fetch.",
+            "format": "uri",
+            "maxLength": 2048
+          }
         },
         "required": ["url"]
       }
