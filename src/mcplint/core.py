@@ -121,12 +121,18 @@ def run_all(tools: list[Tool]) -> list[Finding]:
     # Imported here rather than at the top of the file: rule modules import
     # `Tool` and `Finding` from this module, so a top-level import back into
     # `rules` would be circular.
-    from mcplint.rules import injection, schema_permissiveness, unicode_anomaly
+    from mcplint.rules import (
+        description_outliers,
+        injection,
+        schema_permissiveness,
+        unicode_anomaly,
+    )
 
     rules = (
         injection.check_injection_phrases,
         unicode_anomaly.check_unicode_anomalies,
         schema_permissiveness.check_schema_permissiveness,
+        description_outliers.check_description_outliers,
     )
 
     findings: list[Finding] = []
