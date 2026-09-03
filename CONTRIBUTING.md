@@ -2,7 +2,7 @@
 
 The short version: new rules are new files, they need a fixture and a test, and the docstring has to explain the attack rather than the regex.
 
-[`MCPLINT_DEVELOPMENT.md`](MCPLINT_DEVELOPMENT.md) is the long version — architecture, coding standards, release process. This file is the part you need to open a first pull request.
+This file is everything you need to open a first pull request. For the architecture behind it, read the module docstrings — `core.py` describes the pipeline top to bottom, and each rule file opens with the attack it exists to catch.
 
 ## Getting set up
 
