@@ -76,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="run every rule over a tool list",
         description="Run every rule over a tool list and report what looks wrong.",
     )
-    _add_source_arguments(scan)
+    _add_source_arguments(scan, many=True)
     _add_format_argument(scan)
     _add_quiet_argument(scan)
 
@@ -102,16 +102,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _add_source_arguments(subcommand: argparse.ArgumentParser, known_configs: bool = True) -> None:
+def _add_source_arguments(
+    subcommand: argparse.ArgumentParser, known_configs: bool = True, many: bool = False
+) -> None:
     """Where the input comes from, worded identically on every command.
 
-    `--known-configs` is offered only by `scan`: pinning or diffing a config
-    file is a different question with a different answer, and pretending
-    otherwise would put a flag on a command that could not honour it.
+    `scan` takes any number of paths, because a pre-commit hook hands its tool
+    every staged file that matched and expects it to cope. `pin` and `diff`
+    take one: a baseline describes a single server, and a command that quietly
+    pinned four of them into one file would be worse than one that refused.
+
+    `--known-configs` is offered only by `scan` for the same reason -- pinning
+    a config file is a different question with a different answer, and a flag
+    that could not be honoured is worse than one that is absent.
     """
     subcommand.add_argument(
         "path",
-        nargs="?",
+        nargs="*" if many else "?",
         help="path to a JSON file holding a tools/list response",
     )
     subcommand.add_argument(
@@ -188,13 +195,16 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "known_configs", False):
         return _scan_known_configs(args)
 
+    if args.command == "scan" and args.path:
+        return _scan_each(args)
+
     try:
         tools = _load_tools(args)
     except StdioError as error:
         print(f"mcplint: {error}", file=sys.stderr)
         return EXIT_BAD_INPUT
     except INPUT_ERRORS as error:
-        print(f"mcplint: could not read {args.path}: {error}", file=sys.stderr)
+        print(f"mcplint: could not read {_one_path(args)}: {error}", file=sys.stderr)
         return EXIT_BAD_INPUT
 
     if args.command == "pin":
@@ -202,6 +212,39 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "diff":
         return _diff(tools, args, parser)
     return _report(run_all(tools), len(tools), args)
+
+
+def _scan_each(args: argparse.Namespace) -> int:
+    """Scan several files in one run, reporting each and failing on the worst.
+
+    Findings are tagged with the file they came from, so a hook that hands over
+    forty staged files still produces a report you can act on. The exit code is
+    the worst across all of them -- one poisoned file in forty is a failed run.
+    """
+    worst = EXIT_OK
+    findings: list[Finding] = []
+    total = 0
+
+    for path in args.path:
+        try:
+            tools = load_tools_from_json(path)
+        except INPUT_ERRORS as error:
+            print(f"mcplint: could not read {path}: {error}", file=sys.stderr)
+            worst = EXIT_BAD_INPUT
+            continue
+
+        for finding in run_all(tools):
+            finding.source = str(path)
+            findings.append(finding)
+        total += len(tools)
+
+    code = _report(findings, total, args, source=_scan_label(args), show_source=len(args.path) > 1)
+    return worst if worst == EXIT_BAD_INPUT else code
+
+
+def _scan_label(args: argparse.Namespace) -> str:
+    """What to call the scan as a whole, when a finding does not name a file."""
+    return args.path[0] if len(args.path) == 1 else f"{len(args.path)} files"
 
 
 def _scan_known_configs(args: argparse.Namespace) -> int:
@@ -235,6 +278,8 @@ def _check_source(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         bool(args.stdio_command),
         bool(getattr(args, "known_configs", False)),
     ]
+    if isinstance(args.path, list) and len(args.path) > 1 and args.command != "scan":
+        parser.error(f"{args.command} takes one tool list at a time")
     if sum(chosen) > 1:
         parser.error("choose one of: a path, --stdio-command, or --known-configs")
     if not any(chosen):
@@ -247,17 +292,17 @@ def _check_source(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
 
 
 def _load_tools(args: argparse.Namespace) -> list[Tool]:
-    """Read the tool list from wherever this invocation says it lives."""
+    """Read one tool list from wherever this invocation says it lives."""
     if args.stdio_command:
         return load_tools_from_stdio(args.stdio_command, args.stdio_arg, args.stdio_timeout)
-    return load_tools_from_json(args.path)
+    return load_tools_from_json(_one_path(args))
 
 
 def _pin(tools: list[Tool], args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     """Write the current definitions to a baseline and say where they went."""
     path = _baseline_path(args, parser)
     try:
-        save_baseline(path, fingerprint_tools(tools), args.path or args.stdio_command)
+        save_baseline(path, fingerprint_tools(tools), _one_path(args) or args.stdio_command)
     except OSError as error:
         print(f"mcplint: could not write {path}: {error}", file=sys.stderr)
         return EXIT_BAD_INPUT
@@ -291,7 +336,7 @@ def _baseline_path(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     if args.baseline:
         return Path(args.baseline)
     if args.path:
-        return default_baseline_path(args.path)
+        return default_baseline_path(_one_path(args))
     parser.error("--baseline is required when pinning or diffing a --stdio-command server")
 
 
@@ -301,6 +346,7 @@ def _report(
     args: argparse.Namespace,
     subject: str = "tools",
     source: str | None = None,
+    show_source: bool = False,
 ) -> int:
     """Print findings in the requested format and turn the worst into an exit code.
 
@@ -316,7 +362,7 @@ def _report(
         elif chosen == "json":
             print(render_json(findings, subject_count, subject))
         else:
-            print(render_text(findings, subject_count, subject))
+            print(render_text(findings, subject_count, subject, show_source=show_source))
 
     worst = max((SEVERITY_ORDER[finding.severity] for finding in findings), default=-1)
     return EXIT_FINDINGS if worst >= _fail_threshold(args) else EXIT_OK
@@ -334,8 +380,13 @@ def _fail_threshold(args: argparse.Namespace) -> int:
 def _source_label(args: argparse.Namespace) -> str:
     """What the findings came from, for formats that want to record it."""
     if args.path:
-        return args.path
+        return _one_path(args)
     return f"mcp-stdio:{args.stdio_command}"
+
+
+def _one_path(args: argparse.Namespace) -> str:
+    """The single path this invocation was given, whatever shape it arrived in."""
+    return args.path[0] if isinstance(args.path, list) else args.path
 
 
 def _widen_output_encoding() -> None:

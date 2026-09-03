@@ -71,6 +71,11 @@ class Finding:
     # be a small lie in the output of a tool whose argument is that you should
     # be able to check its output.
     subject_kind: str = "tool"
+    # Which file or server this came from. Rules never set it -- they are given
+    # one tool list and have no idea where it came from. The CLI fills it in
+    # once it knows, which is what lets a scan of forty files say which one the
+    # finding is in.
+    source: str = ""
 
 
 # ---------------------------------------------------------------------------

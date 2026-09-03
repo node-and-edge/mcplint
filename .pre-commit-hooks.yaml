@@ -1,0 +1,40 @@
+# Hooks other repositories can use, via:
+#
+#   repos:
+#     - repo: https://github.com/node-and-edge/mcplint
+#       rev: v0.1.0
+#       hooks:
+#         - id: mcplint
+#
+# The point of running this here rather than in CI is timing. A poisoned tool
+# description that reaches CI has already been pushed, and on a repo that
+# publishes an MCP server it may already have been deployed. This blocks it
+# while it is still a staged change on somebody's laptop.
+
+- id: mcplint
+  name: mcplint (scan MCP tool definitions)
+  description: >-
+    Check staged MCP tool lists for hidden instructions, invisible characters,
+    unbounded parameters and duplicate tool names.
+  entry: mcplint scan
+  language: python
+  # Files that look like a tools/list export. Narrow on purpose: pointed at
+  # every JSON file in a repository this would be noise, and a hook that cries
+  # wolf is a hook people pass --no-verify to.
+  files: (^|/)(tools|mcp-tools|tool[-_]definitions)\.json$
+  pass_filenames: true
+
+- id: mcplint-known-configs
+  name: mcplint (check this machine's MCP client configuration)
+  description: >-
+    Check the MCP servers configured on this machine for shell launch commands,
+    credentials written into config files, and servers reached over plain HTTP.
+    Reads configuration; never starts anything it finds.
+  entry: mcplint scan --known-configs
+  language: python
+  # Nothing in the commit decides this -- it is a question about the machine,
+  # not about the change. `always_run` with no filenames is how pre-commit
+  # spells that.
+  files: ^$
+  always_run: true
+  pass_filenames: false
