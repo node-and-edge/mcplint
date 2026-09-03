@@ -6,9 +6,16 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Absolute path to the file." }
+          "path": {
+            "type": "string",
+            "description": "Absolute path to the file.",
+            "maxLength": 4096,
+            "pattern": "^[A-Za-z0-9._/~-]+$"
+          }
         },
-        "required": ["path"]
+        "required": [
+          "path"
+        ]
       }
     },
     {
@@ -17,9 +24,16 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Directory to list." }
+          "path": {
+            "type": "string",
+            "description": "Directory to list.",
+            "maxLength": 4096,
+            "pattern": "^[A-Za-z0-9._/~-]+$"
+          }
         },
-        "required": ["path"]
+        "required": [
+          "path"
+        ]
       }
     }
   ]
