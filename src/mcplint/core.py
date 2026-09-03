@@ -124,6 +124,7 @@ def run_all(tools: list[Tool]) -> list[Finding]:
     from mcplint.rules import (
         description_outliers,
         injection,
+        pinning,
         schema_permissiveness,
         unicode_anomaly,
     )
@@ -133,6 +134,7 @@ def run_all(tools: list[Tool]) -> list[Finding]:
         unicode_anomaly.check_unicode_anomalies,
         schema_permissiveness.check_schema_permissiveness,
         description_outliers.check_description_outliers,
+        pinning.check_shadowed_names,
     )
 
     findings: list[Finding] = []
