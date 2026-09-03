@@ -1,9 +1,18 @@
-"""Tests for the shadowed tool name rule."""
+"""Tests for both halves of pinning: shadowing now, and redefinition over time."""
 
+import json
 from pathlib import Path
 
-from mcplint.core import HIGH, MEDIUM, Tool, load_tools_from_json, run_all
-from mcplint.rules.pinning import RULE_ID, check_shadowed_names
+from mcplint.core import HIGH, LOW, MEDIUM, Tool, load_tools_from_json, run_all
+from mcplint.rules.pinning import (
+    ADDED_RULE_ID,
+    REDEFINED_RULE_ID,
+    REMOVED_RULE_ID,
+    RULE_ID,
+    check_against_baseline,
+    check_shadowed_names,
+    fingerprint_tools,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -104,3 +113,105 @@ def test_a_missing_description_still_renders():
     tools = [Tool(name="read_file"), Tool(name="read_file")]
 
     assert "(no description)" in check_shadowed_names(tools)[0].evidence_snippet
+
+
+# --- fingerprints -----------------------------------------------------------
+
+
+def test_the_same_tools_fingerprint_the_same_way():
+    tools = _named("a", "b")
+
+    assert fingerprint_tools(tools) == fingerprint_tools(_named("a", "b"))
+
+
+def test_key_order_in_a_schema_is_not_a_change():
+    # A server that serialises its schema differently between runs has not
+    # redefined anything. A diff that cried wolf on key order would be a diff
+    # nobody kept running.
+    first = [Tool(name="t", input_schema={"type": "object", "title": "T"})]
+    second = [Tool(name="t", input_schema={"title": "T", "type": "object"})]
+
+    assert fingerprint_tools(first) == fingerprint_tools(second)
+
+
+def test_a_fingerprint_does_not_contain_the_description():
+    # A baseline is a file you commit. It should not be a copy of every
+    # description on a server you have not decided to trust.
+    tools = [Tool(name="t", description="a very distinctive sentence")]
+
+    assert "distinctive" not in json.dumps(fingerprint_tools(tools))
+
+
+# --- diffing against a baseline ---------------------------------------------
+
+
+def _baseline_of(tools):
+    return fingerprint_tools(tools)
+
+
+def test_an_unchanged_server_produces_no_findings():
+    tools = _named("a", "b")
+
+    assert check_against_baseline(tools, _baseline_of(tools)) == []
+
+
+def test_a_changed_description_is_high_severity():
+    pinned = _baseline_of([Tool(name="read_file", description="Read a file.")])
+    now = [Tool(name="read_file", description="Read a file, and any keys nearby.")]
+
+    findings = check_against_baseline(now, pinned)
+
+    assert [finding.rule_id for finding in findings] == [REDEFINED_RULE_ID]
+    assert findings[0].severity == HIGH
+    assert "description" in findings[0].message
+
+
+def test_a_changed_schema_is_reported_separately_from_a_description():
+    pinned = _baseline_of([Tool(name="t", description="d", input_schema={"type": "object"})])
+    now = [Tool(name="t", description="d", input_schema={"type": "string"})]
+
+    findings = check_against_baseline(now, pinned)
+
+    assert "schema" in findings[0].message
+    assert "description" not in findings[0].message
+
+
+def test_both_halves_changing_is_one_finding_naming_both():
+    pinned = _baseline_of([Tool(name="t", description="d", input_schema={"type": "object"})])
+    now = [Tool(name="t", description="e", input_schema={"type": "string"})]
+
+    findings = check_against_baseline(now, pinned)
+
+    assert len(findings) == 1
+    assert "description and schema" in findings[0].message
+
+
+def test_a_redefinition_reports_how_the_length_moved():
+    pinned = _baseline_of([Tool(name="t", description="x" * 70)])
+    now = [Tool(name="t", description="x" * 110)]
+
+    assert "70 -> 110" in check_against_baseline(now, pinned)[0].evidence_snippet
+
+
+def test_a_new_tool_is_medium_severity_and_shows_itself():
+    pinned = _baseline_of(_named("a"))
+    now = _named("a") + [Tool(name="upload_blob", description="Upload a file.")]
+
+    findings = check_against_baseline(now, pinned)
+
+    assert [finding.rule_id for finding in findings] == [ADDED_RULE_ID]
+    assert findings[0].severity == MEDIUM
+    assert "Upload a file." in findings[0].evidence_snippet
+
+
+def test_a_removed_tool_is_low_severity():
+    pinned = _baseline_of(_named("a", "b"))
+
+    findings = check_against_baseline(_named("a"), pinned)
+
+    assert [finding.rule_id for finding in findings] == [REMOVED_RULE_ID]
+    assert findings[0].severity == LOW
+
+
+def test_an_empty_baseline_makes_every_tool_new():
+    assert len(check_against_baseline(_named("a", "b"), {})) == 2

@@ -15,6 +15,7 @@ at a time.
 
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +105,66 @@ def parse_tools(raw: Any) -> list[Tool]:
                 input_schema=entry.get("inputSchema") or {},
             )
         )
+    return tools
+
+
+# The baseline file `pin` writes and `diff` reads. It sits beside the tool list
+# it describes -- `tools.json` pins to `tools.mcplint.json` -- so two servers
+# scanned in one directory cannot quietly overwrite each other's history. Pass
+# `--baseline` when you want it somewhere else.
+BASELINE_SUFFIX = ".mcplint.json"
+
+# Bumped only if the fingerprint scheme in `rules/pinning.py` changes in a way
+# that would make an old baseline compare wrongly. Kept here rather than beside
+# the scheme itself so this section can validate a file without importing a
+# rule, which would be circular.
+BASELINE_VERSION = 1
+
+
+def default_baseline_path(source: str | Path) -> Path:
+    """Where a tool list's baseline lives when nobody says otherwise."""
+    source = Path(source)
+    return source.with_name(source.stem + BASELINE_SUFFIX)
+
+
+def save_baseline(path: str | Path, fingerprints: dict[str, Any], source: str | Path) -> None:
+    """Write a baseline, formatted so a later change shows up in a code review.
+
+    Sorted keys and indentation are not decoration here. A baseline belongs in
+    version control, and the point of committing one is that the day a server
+    redefines a tool, the diff of this file says so in the pull request.
+    """
+    document = {
+        "version": BASELINE_VERSION,
+        "pinned_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "source": str(source),
+        "tools": fingerprints,
+    }
+    body = json.dumps(document, indent=2, sort_keys=True, ensure_ascii=True)
+    Path(path).write_text(body + "\n", encoding="utf-8")
+
+
+def load_baseline(path: str | Path) -> dict[str, Any]:
+    """Read a baseline's fingerprints, refusing one this version cannot compare.
+
+    A version mismatch is an error rather than a shrug. A rug-pull check that
+    quietly compares nothing still exits zero, and an exit code you cannot
+    trust is worse than no check at all.
+    """
+    document = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise TypeError("baseline should be a JSON object")
+
+    version = document.get("version")
+    if version != BASELINE_VERSION:
+        raise ValueError(
+            f"baseline is version {version!r}, this mcplint writes version "
+            f"{BASELINE_VERSION}. Re-pin after reviewing the current tool list."
+        )
+
+    tools = document.get("tools")
+    if not isinstance(tools, dict):
+        raise TypeError("baseline has no 'tools' object")
     return tools
 
 
