@@ -31,8 +31,14 @@ from mcplint.stdio import DEFAULT_TIMEOUT_SECONDS, StdioError, load_tools_from_s
 
 # A run exits non-zero when it finds anything at least this severe, so the tool
 # is useful in CI with no extra flags. Stated explicitly here rather than left
-# implicit in a comparison somewhere.
+# implicit in a comparison somewhere, and overridable with --fail-on.
 FAIL_ON = MEDIUM
+
+# What --fail-on accepts. `never` is for a job that wants the report published
+# without the build going red -- the finding is still printed, and the exit
+# code still tells the truth about whether reading it was optional.
+FAIL_ON_CHOICES = ("low", "medium", "high", "never")
+DEFAULT_FAIL_ON = FAIL_ON.lower()
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1
@@ -70,6 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_source_arguments(scan)
     _add_format_argument(scan)
+    _add_quiet_argument(scan)
 
     pin = subcommands.add_parser(
         "pin",
@@ -78,6 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_source_arguments(pin, known_configs=False)
     _add_baseline_argument(pin)
+    _add_quiet_argument(pin)
 
     diff = subcommands.add_parser(
         "diff",
@@ -87,6 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_source_arguments(diff, known_configs=False)
     _add_baseline_argument(diff)
     _add_format_argument(diff)
+    _add_quiet_argument(diff)
 
     return parser
 
@@ -139,6 +148,22 @@ def _add_format_argument(subcommand: argparse.ArgumentParser) -> None:
         default=DEFAULT_FORMAT,
         help=f"how to print findings (default: {DEFAULT_FORMAT})",
     )
+    subcommand.add_argument(
+        "--fail-on",
+        choices=FAIL_ON_CHOICES,
+        default=DEFAULT_FAIL_ON,
+        help=f"lowest severity that exits non-zero (default: {DEFAULT_FAIL_ON})",
+    )
+
+
+def _add_quiet_argument(subcommand: argparse.ArgumentParser) -> None:
+    """Say nothing; the exit code is the whole report."""
+    subcommand.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="print nothing, and let the exit code carry the answer",
+    )
 
 
 def _add_baseline_argument(subcommand: argparse.ArgumentParser) -> None:
@@ -183,10 +208,12 @@ def _scan_known_configs(args: argparse.Namespace) -> int:
 
     # The preamble is orientation for a person and noise in a data format, so
     # it is printed only when a person is the one reading.
-    if args.format == "text":
+    if args.format == "text" and not args.quiet:
         if not sources:
             print("No MCP client configuration found on this machine.")
             return EXIT_OK
+    elif not sources and args.format == "text":
+        return EXIT_OK
         noun = "server" if len(servers) == 1 else "servers"
         where = "file" if len(sources) == 1 else "files"
         print(f"Found {len(servers)} configured {noun} across {len(sources)} config {where}.")
@@ -233,8 +260,9 @@ def _pin(tools: list[Tool], args: argparse.Namespace, parser: argparse.ArgumentP
         print(f"mcplint: could not write {path}: {error}", file=sys.stderr)
         return EXIT_BAD_INPUT
 
-    noun = "tool" if len(tools) == 1 else "tools"
-    print(f"Pinned {len(tools)} {noun} to {path}")
+    if not args.quiet:
+        noun = "tool" if len(tools) == 1 else "tools"
+        print(f"Pinned {len(tools)} {noun} to {path}")
     return EXIT_OK
 
 
@@ -274,19 +302,31 @@ def _report(
 ) -> int:
     """Print findings in the requested format and turn the worst into an exit code.
 
-    The exit code does not depend on the format. A CI job that switches to
-    SARIF to get nicer annotations must not quietly stop failing.
+    The exit code does not depend on the format, and `--quiet` changes what is
+    printed and nothing else. A CI job that switches to SARIF for nicer
+    annotations, or goes quiet because the log was noisy, must not quietly
+    stop failing at the same time.
     """
-    chosen = getattr(args, "format", DEFAULT_FORMAT)
-    if chosen == "sarif":
-        print(render_sarif(findings, source or _source_label(args)))
-    elif chosen == "json":
-        print(render_json(findings, subject_count, subject))
-    else:
-        print(render_text(findings, subject_count, subject))
+    if not args.quiet:
+        chosen = getattr(args, "format", DEFAULT_FORMAT)
+        if chosen == "sarif":
+            print(render_sarif(findings, source or _source_label(args)))
+        elif chosen == "json":
+            print(render_json(findings, subject_count, subject))
+        else:
+            print(render_text(findings, subject_count, subject))
 
     worst = max((SEVERITY_ORDER[finding.severity] for finding in findings), default=-1)
-    return EXIT_FINDINGS if worst >= SEVERITY_ORDER[FAIL_ON] else EXIT_OK
+    return EXIT_FINDINGS if worst >= _fail_threshold(args) else EXIT_OK
+
+
+def _fail_threshold(args: argparse.Namespace) -> int:
+    """The severity rank at which this run starts exiting non-zero."""
+    choice = getattr(args, "fail_on", DEFAULT_FAIL_ON)
+    if choice == "never":
+        # Above every rank there is, so nothing reaches it.
+        return len(SEVERITY_ORDER)
+    return SEVERITY_ORDER[choice.upper()]
 
 
 def _source_label(args: argparse.Namespace) -> str:

@@ -131,3 +131,95 @@ def test_a_corrupt_baseline_is_bad_input(tmp_path):
     (tmp_path / "tools.mcplint.json").write_text("{not json", encoding="utf-8")
 
     assert main(["diff", str(path)]) == EXIT_BAD_INPUT
+
+
+# --- output formats and thresholds ------------------------------------------
+
+OUTLIER = str(FIXTURES / "outlier_description.json")
+POISONED = str(FIXTURES / "poisoned_everything.json")
+
+
+def test_the_default_threshold_is_medium(capsys):
+    # The outlier fixture's only finding is LOW, so a default run reports it
+    # and still exits clean. This is the documented contract, asserted here
+    # rather than left implied by whichever rule happened to fire.
+    exit_code = main(["scan", OUTLIER])
+
+    assert exit_code == EXIT_OK
+    assert "DESCRIPTION_OUTLIER" in capsys.readouterr().out
+
+
+def test_fail_on_low_makes_that_same_run_fail():
+    assert main(["scan", OUTLIER, "--fail-on", "low"]) == EXIT_FINDINGS
+
+
+def test_fail_on_high_ignores_a_medium_finding():
+    assert main(["scan", str(FIXTURES / "permissive_schema.json"), "--fail-on", "high"]) == EXIT_OK
+
+
+def test_fail_on_never_reports_everything_and_still_exits_zero(capsys):
+    exit_code = main(["scan", POISONED, "--fail-on", "never"])
+
+    assert exit_code == EXIT_OK
+    assert "INJECTION_PHRASE" in capsys.readouterr().out
+
+
+def test_quiet_prints_nothing_at_all(capsys):
+    exit_code = main(["scan", POISONED, "--quiet"])
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert exit_code == EXIT_FINDINGS, "quiet changes what is printed, not what is found"
+
+
+def test_quiet_does_not_change_the_exit_code():
+    assert main(["scan", POISONED]) == main(["scan", POISONED, "--quiet"])
+    assert main(["scan", str(FIXTURES / "clean_tools.json"), "--quiet"]) == EXIT_OK
+
+
+def test_the_format_does_not_change_the_exit_code():
+    # A CI job that switches to SARIF for nicer annotations must not quietly
+    # stop failing at the same time.
+    codes = {main(["scan", POISONED, "--format", fmt]) for fmt in ("text", "json", "sarif")}
+
+    assert codes == {EXIT_FINDINGS}
+
+
+def test_json_output_parses(capsys):
+    main(["scan", POISONED, "--format", "json"])
+
+    document = json.loads(capsys.readouterr().out)
+
+    assert document["counts"]["high"] == 4
+    assert len(document["findings"]) == 6
+
+
+def test_sarif_output_parses(capsys):
+    main(["scan", POISONED, "--format", "sarif"])
+
+    document = json.loads(capsys.readouterr().out)
+
+    assert document["version"] == "2.1.0"
+    assert document["runs"][0]["results"]
+
+
+def test_sarif_records_the_file_it_scanned(capsys):
+    main(["scan", POISONED, "--format", "sarif"])
+
+    document = json.loads(capsys.readouterr().out)
+    location = document["runs"][0]["results"][0]["locations"][0]
+
+    assert location["physicalLocation"]["artifactLocation"]["uri"] == POISONED
+
+
+def test_quiet_pin_says_nothing(tmp_path, capsys):
+    path = _server_file(tmp_path, ONE_TOOL)
+
+    assert main(["pin", str(path), "--quiet"]) == EXIT_OK
+    assert capsys.readouterr().out == ""
+    assert (tmp_path / "tools.mcplint.json").exists()
+
+
+def test_pin_offers_no_format_flag_because_it_reports_no_findings():
+    with pytest.raises(SystemExit):
+        main(["pin", "tools.json", "--format", "json"])
