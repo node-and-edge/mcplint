@@ -16,13 +16,15 @@ So a tool description can just... contain an instruction. Hidden in whitespace. 
 
 ## Status
 
-All five rules are implemented and wired through, and `scan`, `pin` and `diff` work end to end against a static JSON file. `tests/fixtures/poisoned_everything.json` is one server carrying one payload per rule; scanning it reports all five.
+Everything described below works. Six rules, three subcommands, three input paths, three output formats.
 
-Still to come, and described below as intent rather than fact: the stdio loader (`--stdio-command`), config discovery (`--known-configs`), and SARIF output. Those sections are marked where they appear.
+`scan`, `pin` and `diff` read either a JSON file or a live server over stdio. `scan --known-configs` reads the MCP clients configured on this machine instead. Findings print as text, JSON or SARIF, and the exit code is a flag rather than a constant.
+
+Not yet built: pre-commit hook mode, and a GitHub Action wrapper. Those are in the roadmap at the bottom, as intent rather than fact.
 
 ## What it actually checks
 
-Five checks, each in its own file, each doing exactly one thing. Every rule file opens with a "why this rule exists" section explaining the attack — if you only read one thing in this repo, read those five.
+Six checks, each in its own file, each doing exactly one thing. Every rule file opens with a "why this rule exists" section explaining the attack — if you only read one thing in this repo, read those five.
 
 | File | Rule IDs | Severity | What it catches |
 |---|---|---|---|
@@ -31,6 +33,7 @@ Five checks, each in its own file, each doing exactly one thing. Every rule file
 | `schema_permissiveness.py` | `PERMISSIVE_SCHEMA` | MEDIUM | Free-text string params with no `enum`/`pattern`/`maxLength`/`format`, when the name suggests a shell, a path, a URL or a query. |
 | `description_outliers.py` | `DESCRIPTION_OUTLIER` | LOW | Descriptions wildly longer than the rest of the same server's tools. |
 | `pinning.py` | `SHADOWED_TOOL_NAME`<br>`TOOL_REDEFINED`<br>`TOOL_ADDED`<br>`TOOL_REMOVED` | HIGH / MEDIUM<br>HIGH<br>MEDIUM<br>LOW | Two tools claiming one name, and (via `pin`/`diff`) a tool that quietly became a different tool. |
+| `config_hygiene.py` | `CONFIG_SHELL_LAUNCH`<br>`CONFIG_PLAINTEXT_SECRET`<br>`CONFIG_INSECURE_TRANSPORT`<br>`CONFIG_NO_AUTH` | HIGH<br>MEDIUM<br>HIGH<br>LOW | How a server *starts*: launched through a shell, credentials written into the config file, reached over plain HTTP. |
 
 A few notes on what the one-liners above don't say:
 
@@ -39,8 +42,9 @@ A few notes on what the one-liners above don't say:
 - **`schema_permissiveness.py`** fires on honest mistakes more often than on attacks, which is the argument for it — an unconstrained parameter is where a poisoned description *lands*. Prompt injection is the delivery; this is the landing site.
 - **`description_outliers.py`** compares against the median with the median absolute deviation, not the mean and standard deviation. The obvious version is wrong: an outlier inflates the deviation it's then measured against, so with population statistics nothing can exceed `sqrt(n-1)` deviations — 2.0 on a five-tool server. A mean-based rule with a threshold of 3.0 would look entirely reasonable in review and never fire once. There's a test named after that.
 - **`pinning.py`** stores only hashes and a length. A baseline is a file you commit, and it shouldn't become a copy of every description on a server you haven't decided to trust.
+- **`config_hygiene.py`** is the only rule that fires before a server has said anything. It reads the config file you edited once and haven't opened since — which is a better target than any tool description, because a poisoned description has to talk a model into something and a poisoned launch command just runs. It's deliberately quiet: the `npx` line out of every MCP server's own README is not a finding, `PGPORT=5432` is not a credential, and `${VAULT_TOKEN}` is a reference rather than a secret. Two thirds of its tests are negative cases for that reason.
 
-That's it. That's the whole tool. Everything else (SARIF export, config auto-discovery, table formatting) is plumbing around these five checks, not additional cleverness.
+That's it. That's the whole tool. Everything else — the stdio handshake, SARIF export, config discovery, table formatting — is plumbing around those six checks, not additional cleverness.
 
 `mcplint` is the layer you run locally, for free, with nothing installed but Python, before you ever send a tool description to anyone's API. Think of it as the `flake8` to their full CI security suite — narrower, dumber, and fine with that.
 
@@ -54,13 +58,33 @@ Zero required dependencies beyond the Python standard library.
 
 ## Usage
 
+### Three ways in
+
 Point it at a static export of a server's tool list:
 
 ```bash
 mcplint scan tools.json
 ```
 
-Baseline the current tool set, then check for silent changes later (rug-pull detection):
+Or let it spawn a stdio MCP server itself and pull `tools/list` directly:
+
+```bash
+mcplint scan --stdio-command npx --stdio-arg -y --stdio-arg some-mcp-server
+```
+
+mcplint runs the client handshake, reads the menu, and kills the process. It never calls a tool, never sends a prompt, and never sends anything it read anywhere. That's the only network-adjacent thing in the project, and it happens only when you name the command yourself.
+
+Or check whatever's already configured in Claude Desktop / Claude Code / Cursor / VS Code / Windsurf on this machine:
+
+```bash
+mcplint scan --known-configs
+```
+
+This reads config files and **never starts anything it finds**. Finding a server in a config file is not consent to run it. It reports on how servers are configured — shell launches, credentials written into the file, plain HTTP — not on their tool descriptions, which would require connecting to them.
+
+### Rug-pull detection
+
+Baseline the current tool set, then check for silent changes later:
 
 ```bash
 mcplint pin tools.json
@@ -68,24 +92,30 @@ mcplint pin tools.json
 mcplint diff tools.json
 ```
 
-`pin` writes its baseline beside the file it read — `tools.json` pins to `tools.mcplint.json` — so two servers scanned in one directory can't overwrite each other's history. Pass `--baseline PATH` to put it somewhere else. Commit the baseline: the point of having one in version control is that the day a server redefines a tool, the diff of that file says so in the pull request.
+Both work against a live server too, which is where this is actually useful:
+
+```bash
+mcplint pin  --stdio-command npx --stdio-arg -y --stdio-arg some-server --baseline server.mcplint.json
+mcplint diff --stdio-command npx --stdio-arg -y --stdio-arg some-server --baseline server.mcplint.json
+```
+
+`pin` writes its baseline beside the file it read — `tools.json` pins to `tools.mcplint.json` — so two servers scanned in one directory can't overwrite each other's history. A live server has no such obvious home, so `--baseline` is required there rather than guessed at. Commit the baseline: the point of having one in version control is that the day a server redefines a tool, the diff of that file says so in the pull request.
 
 A baseline this build can't parse is a hard error, not an empty comparison. A rug-pull check that quietly compares nothing still exits `0`, and an exit code you can't trust is worse than no check at all.
 
-**Not implemented yet.** The three invocations below are the intended shape of the tool and don't work today:
+### Output formats
 
 ```bash
-# spawn a stdio MCP server and pull tools/list directly
-mcplint scan --stdio-command npx --stdio-arg -y --stdio-arg some-mcp-server
-
-# scan whatever's configured in Claude Desktop / Cursor / etc. on this machine
-mcplint scan --known-configs
-
-# CI-friendly output for GitHub code scanning
-mcplint scan tools.json --format sarif > results.sarif
+mcplint scan tools.json --format json    # for a script
+mcplint scan tools.json --format sarif > results.sarif   # for GitHub code scanning
+mcplint scan tools.json --quiet          # nothing but the exit code
 ```
 
-Example output, copied from an actual run against the fixture in this repo:
+The format never changes the exit code. A CI job that switches to SARIF for nicer annotations shouldn't quietly stop failing at the same time.
+
+### Example output
+
+Copied from an actual run against the fixtures in this repo, not written by hand:
 
 ```
 $ mcplint scan tests/fixtures/poisoned_everything.json
@@ -113,7 +143,33 @@ $ mcplint scan tests/fixtures/poisoned_everything.json
 6 findings across 9 tools. 4 high, 1 medium, 1 low.
 ```
 
-That fixture is one server carrying one payload per rule. It's also the honest answer to "what does an actual attack look like" — worth reading before the code.
+And a config with the usual problems in it:
+
+```
+$ mcplint scan --known-configs
+
+  server: bootstrap
+  [HIGH]   CONFIG_SHELL_LAUNCH  launch command runs a script through bash (configured in Claude Desktop)
+                                bash -c curl -fsSL https://install.example.com/mcp.sh | sh  [claude_desktop_config.json]
+
+  server: analytics
+  [HIGH]   CONFIG_INSECURE_TRANSPORT server is reached over plain HTTP (configured in Claude Desktop)
+                                http://metrics.internal.example.com/mcp  [claude_desktop_config.json]
+  [LOW]    CONFIG_NO_AUTH       remote server has no credential configured (configured in Claude Desktop)
+                                http://metrics.internal.example.com/mcp  [claude_desktop_config.json]
+
+  server: billing
+  [MEDIUM] CONFIG_PLAINTEXT_SECRET headers entry "Authorization" looks like a credential written into the config (configured in Claude Desktop)
+                                Authorization=Bear... (27 characters)  [claude_desktop_config.json]
+
+  server: postgres
+  [MEDIUM] CONFIG_PLAINTEXT_SECRET env entry "DATABASE_PASSWORD" looks like a credential written into the config (configured in Claude Desktop)
+                                DATABASE_PASSWORD=corr... (21 characters)  [claude_desktop_config.json]
+
+5 findings across 5 servers. 2 high, 2 medium, 1 low.
+```
+
+Those fixtures are the honest answer to "what does an actual attack look like" — worth reading before the code.
 
 ### Exit codes
 
@@ -121,14 +177,24 @@ So it's useful in CI without extra flags:
 
 | Code | Meaning |
 |---|---|
-| `0` | scanned fine, nothing at or above `MEDIUM` |
-| `1` | at least one finding at `MEDIUM` or `HIGH` |
-| `2` | the input couldn't be read or parsed |
+| `0` | ran fine, nothing at or above the fail threshold |
+| `1` | at least one finding at or above the fail threshold |
+| `2` | the input couldn't be read, the server couldn't be reached, or the baseline couldn't be parsed |
+
+The threshold defaults to `MEDIUM` and moves with `--fail-on`:
+
+```bash
+mcplint scan tools.json --fail-on low     # outliers fail the build too
+mcplint scan tools.json --fail-on never   # report everything, never go red
+```
+
+`--fail-on never` is what you want on day one of adopting this on an existing codebase: the report gets published, the build stays green, and you decide what to fix before you turn the ratchet.
 
 ## Design notes, for anyone reading the source
 
 - Every finding is a plain dataclass: `rule_id`, `severity`, `tool_name`, `message`, `evidence_snippet`, `remediation`. No inheritance hierarchy, no plugin framework. If you want a new check, copy an existing rule file and change the logic.
-- Nothing here calls the network except the one legitimate `tools/list` round trip when you use `--stdio-command`. If you feed it a static JSON file, it makes zero network calls, full stop.
+- Nothing here calls the network except the one legitimate `tools/list` round trip when you use `--stdio-command`. If you feed it a static JSON file, it makes zero network calls, full stop. That claim is structural rather than aspirational: everything that can spawn a process lives in `stdio.py`, nothing under `rules/` imports it, and it imports no rule. You can check that by reading two import lists.
+- `rules/` modules take data and return data. They can't read a file, write one, or open a socket — not by policy but because they're never handed anything that could. Config hygiene needs a file, so the reading lives in `config_scan.py` and the rule takes the results as arguments.
 - Nothing here calls an LLM. That's a deliberate constraint, not a missing feature — it's what keeps this at "run before your coffee's ready" speed and "free" cost, and it's what makes the false positives predictable instead of vibes-based.
 - The rule thresholds (z-score cutoffs, dangerous param name list, etc.) are constants at the top of each file, not buried in config. Change them, rerun, see what happens. That's the intended workflow.
 
@@ -147,10 +213,10 @@ If any of those matter to you — and for a production deployment, they probably
 
 Roughly in order of "will actually get built":
 
-- [x] A small fixtures set of deliberately poisoned tool defs, for testing and for showing people what an actual attack looks like — `tests/fixtures/`, one per rule plus `poisoned_everything.json`
-- [ ] The stdio loader, so `--stdio-command` works and you can point this at a live server
-- [ ] Config-hygiene check (flag servers with no auth, or stdio commands invoking `bash -c`/`eval` directly), reached via `--known-configs`
-- [ ] SARIF and JSON output
+- [x] A small fixtures set of deliberately poisoned tool defs — `tests/fixtures/`, one per rule plus `poisoned_everything.json` and `poisoned_config.json`
+- [x] The stdio loader, so `--stdio-command` works and you can point this at a live server
+- [x] Config-hygiene check (servers with no auth, or launch commands invoking `bash -c`/`eval` directly), reached via `--known-configs`
+- [x] SARIF and JSON output
 - [ ] Pre-commit hook mode — block a tool description change before it's committed, not just after deploy
 - [ ] Maybe a GitHub Action wrapper, if people ask for it
 

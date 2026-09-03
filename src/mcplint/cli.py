@@ -61,10 +61,12 @@ def build_parser() -> argparse.ArgumentParser:
         prog="mcplint",
         description="Static linter for MCP server tool definitions.",
         epilog=(
-            "Every command reads either a JSON file or, with --stdio-command, a "
-            "live server. Spawning a server is the only thing mcplint does that "
-            "is not arithmetic on a file you already had, and it happens only "
-            "when you ask for it by name."
+            "Input comes from one of three places: a JSON file, a live server "
+            "started with --stdio-command, or this machine's own client "
+            "configuration with --known-configs. Spawning a server is the only "
+            "thing mcplint does that is not arithmetic on a file, and it happens "
+            "only when you name the command yourself -- reading a config never "
+            "starts anything found in it."
         ),
     )
     subcommands = parser.add_subparsers(dest="command", required=True)

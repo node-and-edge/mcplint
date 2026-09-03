@@ -211,3 +211,50 @@ def test_every_finding_carries_a_remedy():
 
 def test_an_empty_config_produces_nothing():
     assert check_config_hygiene([]) == []
+
+
+# --- the fixture ------------------------------------------------------------
+
+
+def test_the_poisoned_config_fixture_trips_every_check():
+    from mcplint.config_scan import discover_servers
+
+    fixture = Path(__file__).parent / "fixtures" / "poisoned_config.json"
+    servers, read = discover_servers([("Claude Desktop", fixture)])
+
+    findings = check_config_hygiene(servers)
+
+    assert read == [fixture]
+    assert set(_ids(findings)) == {
+        SHELL_LAUNCH_RULE_ID,
+        PLAINTEXT_SECRET_RULE_ID,
+        INSECURE_TRANSPORT_RULE_ID,
+        NO_AUTH_RULE_ID,
+    }
+
+
+def test_the_ordinary_server_in_that_fixture_is_left_alone():
+    from mcplint.config_scan import discover_servers
+
+    fixture = Path(__file__).parent / "fixtures" / "poisoned_config.json"
+    servers, _ = discover_servers([("Claude Desktop", fixture)])
+
+    flagged = {finding.tool_name for finding in check_config_hygiene(servers)}
+
+    assert "files" not in flagged, "a plain npx launch must not be a finding"
+
+
+def test_a_vault_reference_in_that_fixture_is_not_reported_as_a_secret():
+    from mcplint.config_scan import discover_servers
+
+    fixture = Path(__file__).parent / "fixtures" / "poisoned_config.json"
+    servers, _ = discover_servers([("Claude Desktop", fixture)])
+    postgres = next(server for server in servers if server.name == "postgres")
+
+    secrets = [
+        finding
+        for finding in check_config_hygiene([postgres])
+        if finding.rule_id == PLAINTEXT_SECRET_RULE_ID
+    ]
+
+    assert [f.message.split('"')[1] for f in secrets] == ["DATABASE_PASSWORD"]
