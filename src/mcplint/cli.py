@@ -34,9 +34,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _widen_output_encoding() -> None:
+    """Let the process print any character a scan turned up.
+
+    A Windows console defaults to cp1252, which cannot encode a Cyrillic tool
+    name -- so printing one raises `UnicodeEncodeError` and the scan dies on
+    exactly the finding it exists to report. A linter that looks for strange
+    characters has to survive finding one, so widen the stream rather than
+    narrow the finding.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run a scan and return the process exit code."""
     args = build_parser().parse_args(argv)
+    _widen_output_encoding()
 
     try:
         tools = load_tools_from_json(args.path)

@@ -121,9 +121,12 @@ def run_all(tools: list[Tool]) -> list[Finding]:
     # Imported here rather than at the top of the file: rule modules import
     # `Tool` and `Finding` from this module, so a top-level import back into
     # `rules` would be circular.
-    from mcplint.rules import injection
+    from mcplint.rules import injection, unicode_anomaly
 
-    rules = (injection.check_injection_phrases,)
+    rules = (
+        injection.check_injection_phrases,
+        unicode_anomaly.check_unicode_anomalies,
+    )
 
     findings: list[Finding] = []
     for rule in rules:
@@ -149,7 +152,7 @@ def render_text(findings: list[Finding], tool_count: int) -> str:
 
     lines: list[str] = []
     for tool_name in _tool_order(findings):
-        lines.append(f"  tool: {tool_name}")
+        lines.append(f"  tool: {visible(tool_name)}")
         for finding in findings:
             if finding.tool_name != tool_name:
                 continue
@@ -161,6 +164,18 @@ def render_text(findings: list[Finding], tool_count: int) -> str:
 
     lines.append(_summary(findings, tool_count))
     return "\n".join(lines)
+
+
+def visible(text: str) -> str:
+    """Text with unprintable characters replaced by their codepoints.
+
+    Echoing a tool name back exactly as the server sent it would let a name
+    containing a zero-width space print as though it were clean -- in the
+    output of the tool whose entire job is to say that it is not.
+    """
+    return "".join(
+        character if character.isprintable() else f"<U+{ord(character):04X}>" for character in text
+    )
 
 
 def _tool_order(findings: list[Finding]) -> list[str]:
