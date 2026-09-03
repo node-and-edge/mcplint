@@ -10,6 +10,39 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = []
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "security",
+    "linter",
+    "static-analysis",
+    "prompt-injection",
+    "tool-poisoning",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/node-and-edge/mcplint"
+Repository = "https://github.com/node-and-edge/mcplint"
+Changelog = "https://github.com/node-and-edge/mcplint/blob/main/CHANGELOG.md"
+Issues = "https://github.com/node-and-edge/mcplint/issues"
 
 [project.scripts]
 mcplint = "mcplint.cli:main"

@@ -288,3 +288,35 @@ def test_pin_refuses_more_than_one_tool_list():
     # file would be worse than refusing.
     with pytest.raises(SystemExit):
         main(["pin", CLEAN, INJECTION])
+
+
+# --- packaging surface ------------------------------------------------------
+
+
+def test_version_prints_the_package_version(capsys):
+    from mcplint import __version__
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--version"])
+
+    assert exit_info.value.code == EXIT_OK
+    assert __version__ in capsys.readouterr().out
+
+
+def test_the_package_declares_no_runtime_dependencies():
+    # The headline claim on the README's install section. It is one line in
+    # pyproject.toml and exactly the kind of line that gets edited by accident.
+    import tomllib
+
+    pyproject = Path(__file__).parent.parent / "pyproject.toml"
+    project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+
+    assert project["dependencies"] == []
+
+
+def test_the_package_ships_its_type_marker():
+    # `Typing :: Typed` in the classifiers is a promise that py.typed is in the
+    # wheel. If the file moves, the promise silently becomes false.
+    marker = Path(__file__).parent.parent / "src" / "mcplint" / "py.typed"
+
+    assert marker.exists()

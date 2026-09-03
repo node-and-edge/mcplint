@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+from mcplint import __version__
 from mcplint.config_scan import discover_servers
 from mcplint.core import (
     MEDIUM,
@@ -68,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
             "only when you name the command yourself -- reading a config never "
             "starts anything found in it."
         ),
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"mcplint {__version__}",
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
