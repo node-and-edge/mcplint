@@ -102,6 +102,29 @@ Not because they're bad ideas — several are good ones — but because they're 
 
 If you think one genuinely belongs, open an issue arguing for it. Don't fold it into an unrelated pull request.
 
+## Releasing
+
+Maintainers only, and deliberately manual — a tag is a promise to whoever installs it.
+
+1. `uv run ruff check . && uv run ruff format --check . && uv run pytest` — green locally.
+2. Bump `version` in `pyproject.toml` and `__version__` in `src/mcplint/__init__.py`. They must agree; `mcplint --version` reads the second and the wheel reads the first.
+3. Update `CHANGELOG.md` in the same pull request as the version bump, not afterwards. Set the date on the heading.
+4. Merge to `main` and **wait for CI to be green on `main` itself**, not just on the pull request.
+5. `git tag vX.Y.Z && git push origin vX.Y.Z`.
+6. `uv build`, then check the wheel before publishing it:
+   ```bash
+   uv build
+   uv run python -m zipfile -l dist/*.whl        # py.typed and LICENSE present, no strays
+   uv venv --python 3.11 /tmp/release-check      # somewhere that is not this checkout
+   uv pip install --python /tmp/release-check dist/*.whl
+   /tmp/release-check/bin/mcplint --version
+   ```
+   The install check is not ceremony. It is the only step that catches a package which imports fine from the source tree and not from the wheel.
+7. `uv publish`.
+8. Bump the `rev:` in the README's pre-commit example to the new tag.
+
+Pre-1.0, breaking changes are allowed but must be called out plainly in the changelog rather than buried.
+
 ## Reporting a vulnerability in mcplint itself
 
 Open a regular issue for anything you find in the rules — a false negative is a bug, not a secret.

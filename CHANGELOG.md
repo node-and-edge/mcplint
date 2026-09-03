@@ -4,7 +4,7 @@ Notable changes to `mcplint`, one entry per release, grouped Added / Changed / F
 
 Versioning is [semver](https://semver.org/). Pre-1.0 the CLI surface — subcommands, flags, output formats — is not stable, and a breaking change to it is a minor bump. Breaking changes are called out plainly here rather than buried.
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-09-03
 
 First release. Everything is new, so the list below is organised by what it does for you rather than by category.
 
