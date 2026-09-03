@@ -2,8 +2,9 @@
 
 Argument parsing, dispatch and exit codes only. Anything that looks like
 analysis belongs in a rule; anything that looks like formatting or file access
-belongs in `core.py`. Each subcommand below should read as a paragraph you can
-check against the documented behaviour without going anywhere else.
+belongs in `core.py`; anything that spawns a process belongs in `stdio.py`.
+Each subcommand below should read as a paragraph you can check against the
+documented behaviour without going anywhere else.
 """
 
 import argparse
@@ -24,8 +25,9 @@ from mcplint.core import (
     save_baseline,
 )
 from mcplint.rules.pinning import check_against_baseline, fingerprint_tools
+from mcplint.stdio import DEFAULT_TIMEOUT_SECONDS, StdioError, load_tools_from_stdio
 
-# A scan exits non-zero when it finds anything at least this severe, so the tool
+# A run exits non-zero when it finds anything at least this severe, so the tool
 # is useful in CI with no extra flags. Stated explicitly here rather than left
 # implicit in a comparison somewhere.
 FAIL_ON = MEDIUM
@@ -41,31 +43,72 @@ INPUT_ERRORS = (OSError, json.JSONDecodeError, TypeError, ValueError)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Define the CLI surface: scan, pin and diff, each taking one path."""
+    """Define the CLI surface: scan, pin and diff over a file or a live server."""
     parser = argparse.ArgumentParser(
         prog="mcplint",
         description="Static linter for MCP server tool definitions.",
+        epilog=(
+            "Every command reads either a JSON file or, with --stdio-command, a "
+            "live server. Spawning a server is the only thing mcplint does that "
+            "is not arithmetic on a file you already had, and it happens only "
+            "when you ask for it by name."
+        ),
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
-    scan = subcommands.add_parser("scan", help="run every rule over a tools.json file")
-    scan.add_argument("path", help="path to a JSON file holding a tools/list response")
+    scan = subcommands.add_parser(
+        "scan",
+        help="run every rule over a tool list",
+        description="Run every rule over a tool list and report what looks wrong.",
+    )
+    _add_source_arguments(scan)
 
     pin = subcommands.add_parser(
         "pin",
         help="record the current tool definitions, to compare against later",
+        description="Record a fingerprint of every tool, to compare against later.",
     )
-    pin.add_argument("path", help="path to a JSON file holding a tools/list response")
+    _add_source_arguments(pin)
     _add_baseline_argument(pin)
 
     diff = subcommands.add_parser(
         "diff",
         help="report what changed since this server was pinned",
+        description="Report tools added, removed or silently redefined since pinning.",
     )
-    diff.add_argument("path", help="path to a JSON file holding a tools/list response")
+    _add_source_arguments(diff)
     _add_baseline_argument(diff)
 
     return parser
+
+
+def _add_source_arguments(subcommand: argparse.ArgumentParser) -> None:
+    """Where the tool list comes from, worded identically on every command."""
+    subcommand.add_argument(
+        "path",
+        nargs="?",
+        help="path to a JSON file holding a tools/list response",
+    )
+    subcommand.add_argument(
+        "--stdio-command",
+        metavar="CMD",
+        default=None,
+        help="instead of a file, run this command as an MCP server and ask it directly",
+    )
+    subcommand.add_argument(
+        "--stdio-arg",
+        metavar="ARG",
+        action="append",
+        default=[],
+        help="an argument for --stdio-command; repeat once per argument",
+    )
+    subcommand.add_argument(
+        "--stdio-timeout",
+        metavar="SECONDS",
+        type=float,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help=f"how long the server gets to answer (default: {DEFAULT_TIMEOUT_SECONDS:.0f})",
+    )
 
 
 def _add_baseline_argument(subcommand: argparse.ArgumentParser) -> None:
@@ -80,27 +123,49 @@ def _add_baseline_argument(subcommand: argparse.ArgumentParser) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Run a subcommand and return the process exit code."""
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     _widen_output_encoding()
+    _check_source(parser, args)
 
     try:
-        tools = load_tools_from_json(args.path)
+        tools = _load_tools(args)
+    except StdioError as error:
+        print(f"mcplint: {error}", file=sys.stderr)
+        return EXIT_BAD_INPUT
     except INPUT_ERRORS as error:
         print(f"mcplint: could not read {args.path}: {error}", file=sys.stderr)
         return EXIT_BAD_INPUT
 
     if args.command == "pin":
-        return _pin(tools, args.path, args.baseline)
+        return _pin(tools, args, parser)
     if args.command == "diff":
-        return _diff(tools, args.path, args.baseline)
+        return _diff(tools, args, parser)
     return _report(run_all(tools), len(tools))
 
 
-def _pin(tools: list[Tool], source: str, baseline: str | None) -> int:
+def _check_source(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Insist on exactly one source, since argparse cannot express that here."""
+    if args.path and args.stdio_command:
+        parser.error("give a path or --stdio-command, not both")
+    if not args.path and not args.stdio_command:
+        parser.error("give a path to a tool list, or --stdio-command to ask a server")
+    if args.stdio_arg and not args.stdio_command:
+        parser.error("--stdio-arg has nothing to attach to without --stdio-command")
+
+
+def _load_tools(args: argparse.Namespace) -> list[Tool]:
+    """Read the tool list from wherever this invocation says it lives."""
+    if args.stdio_command:
+        return load_tools_from_stdio(args.stdio_command, args.stdio_arg, args.stdio_timeout)
+    return load_tools_from_json(args.path)
+
+
+def _pin(tools: list[Tool], args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     """Write the current definitions to a baseline and say where they went."""
-    path = Path(baseline) if baseline else default_baseline_path(source)
+    path = _baseline_path(args, parser)
     try:
-        save_baseline(path, fingerprint_tools(tools), source)
+        save_baseline(path, fingerprint_tools(tools), args.path or args.stdio_command)
     except OSError as error:
         print(f"mcplint: could not write {path}: {error}", file=sys.stderr)
         return EXIT_BAD_INPUT
@@ -110,9 +175,9 @@ def _pin(tools: list[Tool], source: str, baseline: str | None) -> int:
     return EXIT_OK
 
 
-def _diff(tools: list[Tool], source: str, baseline: str | None) -> int:
+def _diff(tools: list[Tool], args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     """Compare the current definitions against a baseline written earlier."""
-    path = Path(baseline) if baseline else default_baseline_path(source)
+    path = _baseline_path(args, parser)
     try:
         pinned = load_baseline(path)
     except INPUT_ERRORS as error:
@@ -120,6 +185,21 @@ def _diff(tools: list[Tool], source: str, baseline: str | None) -> int:
         return EXIT_BAD_INPUT
 
     return _report(check_against_baseline(tools, pinned), len(tools))
+
+
+def _baseline_path(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Path:
+    """Where this run's baseline lives.
+
+    A file has an obvious answer -- beside itself. A live server does not: a
+    command line is not a location, and guessing a filename from one would put
+    two different servers in the same baseline the first time somebody ran
+    `npx` twice. So say so instead of guessing.
+    """
+    if args.baseline:
+        return Path(args.baseline)
+    if args.path:
+        return default_baseline_path(args.path)
+    parser.error("--baseline is required when pinning or diffing a --stdio-command server")
 
 
 def _report(findings: list[Finding], tool_count: int) -> int:
