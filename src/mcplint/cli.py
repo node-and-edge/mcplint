@@ -21,10 +21,10 @@ from mcplint.core import (
     default_baseline_path,
     load_baseline,
     load_tools_from_json,
-    render_text,
     run_all,
     save_baseline,
 )
+from mcplint.report import render_sarif, render_text
 from mcplint.rules.config_hygiene import check_config_hygiene
 from mcplint.rules.pinning import check_against_baseline, fingerprint_tools
 from mcplint.stdio import DEFAULT_TIMEOUT_SECONDS, StdioError, load_tools_from_stdio
@@ -42,6 +42,11 @@ EXIT_BAD_INPUT = 2
 # Collected here so the three subcommands cannot drift apart on what counts as
 # bad input versus what counts as a finding.
 INPUT_ERRORS = (OSError, json.JSONDecodeError, TypeError, ValueError)
+
+# How findings can be printed. Text is what a person reads; the other two exist
+# so that something other than a person can read them without parsing text.
+FORMATS = ("text", "sarif")
+DEFAULT_FORMAT = "text"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run every rule over a tool list and report what looks wrong.",
     )
     _add_source_arguments(scan)
+    _add_format_argument(scan)
 
     pin = subcommands.add_parser(
         "pin",
@@ -80,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_source_arguments(diff, known_configs=False)
     _add_baseline_argument(diff)
+    _add_format_argument(diff)
 
     return parser
 
@@ -124,6 +131,16 @@ def _add_source_arguments(subcommand: argparse.ArgumentParser, known_configs: bo
     )
 
 
+def _add_format_argument(subcommand: argparse.ArgumentParser) -> None:
+    """How to print findings. Not offered by `pin`, which reports no findings."""
+    subcommand.add_argument(
+        "--format",
+        choices=FORMATS,
+        default=DEFAULT_FORMAT,
+        help=f"how to print findings (default: {DEFAULT_FORMAT})",
+    )
+
+
 def _add_baseline_argument(subcommand: argparse.ArgumentParser) -> None:
     """The `--baseline` flag, worded identically on both commands that take it."""
     subcommand.add_argument(
@@ -142,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     _check_source(parser, args)
 
     if getattr(args, "known_configs", False):
-        return _scan_known_configs()
+        return _scan_known_configs(args)
 
     try:
         tools = _load_tools(args)
@@ -157,24 +174,29 @@ def main(argv: list[str] | None = None) -> int:
         return _pin(tools, args, parser)
     if args.command == "diff":
         return _diff(tools, args, parser)
-    return _report(run_all(tools), len(tools))
+    return _report(run_all(tools), len(tools), args)
 
 
-def _scan_known_configs() -> int:
+def _scan_known_configs(args: argparse.Namespace) -> int:
     """Check this machine's configured servers, without starting any of them."""
     servers, sources = discover_servers()
-    if not sources:
-        print("No MCP client configuration found on this machine.")
-        return EXIT_OK
 
-    noun = "server" if len(servers) == 1 else "servers"
-    where = "file" if len(sources) == 1 else "files"
-    print(f"Found {len(servers)} configured {noun} across {len(sources)} config {where}.")
-    for source in sources:
-        print(f"  {source}")
-    print()
+    # The preamble is orientation for a person and noise in a data format, so
+    # it is printed only when a person is the one reading.
+    if args.format == "text":
+        if not sources:
+            print("No MCP client configuration found on this machine.")
+            return EXIT_OK
+        noun = "server" if len(servers) == 1 else "servers"
+        where = "file" if len(sources) == 1 else "files"
+        print(f"Found {len(servers)} configured {noun} across {len(sources)} config {where}.")
+        for source in sources:
+            print(f"  {source}")
+        print()
 
-    return _report(check_config_hygiene(servers), len(servers), subject="servers")
+    return _report(
+        check_config_hygiene(servers), len(servers), args, subject="servers", source="known-configs"
+    )
 
 
 def _check_source(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
@@ -225,7 +247,7 @@ def _diff(tools: list[Tool], args: argparse.Namespace, parser: argparse.Argument
         print(f"mcplint: could not read baseline {path}: {error}", file=sys.stderr)
         return EXIT_BAD_INPUT
 
-    return _report(check_against_baseline(tools, pinned), len(tools))
+    return _report(check_against_baseline(tools, pinned), len(tools), args)
 
 
 def _baseline_path(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Path:
@@ -243,12 +265,33 @@ def _baseline_path(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     parser.error("--baseline is required when pinning or diffing a --stdio-command server")
 
 
-def _report(findings: list[Finding], subject_count: int, subject: str = "tools") -> int:
-    """Print findings and turn the worst of them into an exit code."""
-    print(render_text(findings, subject_count, subject))
+def _report(
+    findings: list[Finding],
+    subject_count: int,
+    args: argparse.Namespace,
+    subject: str = "tools",
+    source: str | None = None,
+) -> int:
+    """Print findings in the requested format and turn the worst into an exit code.
+
+    The exit code does not depend on the format. A CI job that switches to
+    SARIF to get nicer annotations must not quietly stop failing.
+    """
+    chosen = getattr(args, "format", DEFAULT_FORMAT)
+    if chosen == "sarif":
+        print(render_sarif(findings, source or _source_label(args)))
+    else:
+        print(render_text(findings, subject_count, subject))
 
     worst = max((SEVERITY_ORDER[finding.severity] for finding in findings), default=-1)
     return EXIT_FINDINGS if worst >= SEVERITY_ORDER[FAIL_ON] else EXIT_OK
+
+
+def _source_label(args: argparse.Namespace) -> str:
+    """What the findings came from, for formats that want to record it."""
+    if args.path:
+        return args.path
+    return f"mcp-stdio:{args.stdio_command}"
 
 
 def _widen_output_encoding() -> None:
