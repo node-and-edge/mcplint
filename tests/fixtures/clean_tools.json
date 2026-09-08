@@ -1,0 +1,52 @@
+{
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a file from the local filesystem and return its contents as text.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute path to the file.",
+            "pattern": "^/[A-Za-z0-9._/-]+$",
+            "maxLength": 4096
+          }
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "list_directory",
+      "description": "List the entries in a directory, one per line.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory to list.",
+            "pattern": "^/[A-Za-z0-9._/-]*$",
+            "maxLength": 4096
+          }
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "fetch_url",
+      "description": "Perform an HTTP GET request and return the response body.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL to fetch.",
+            "format": "uri",
+            "maxLength": 2048
+          }
+        },
+        "required": ["url"]
+      }
+    }
+  ]
+}

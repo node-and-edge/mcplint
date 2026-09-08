@@ -1,0 +1,72 @@
+{
+  "tools": [
+    {
+      "name": "run_shell",
+      "description": "Run a shell command on the host and return stdout.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "command": { "type": "string", "description": "The command to run." },
+          "timeout_seconds": { "type": "integer", "maximum": 60 }
+        },
+        "required": ["command"]
+      }
+    },
+    {
+      "name": "read_file",
+      "description": "Read a file, with options.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "options": {
+            "type": "object",
+            "properties": {
+              "file_path": { "type": "string" },
+              "encoding": { "type": "string", "enum": ["utf-8", "ascii"] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "fetch_many",
+      "description": "Fetch several URLs and return their bodies.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "targetUrl": { "type": ["string", "null"] }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "greet",
+      "description": "Return a greeting. Nothing here reaches anything dangerous.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "nickname": { "type": "string" },
+          "times": { "type": "integer" }
+        }
+      }
+    },
+    {
+      "name": "read_known_config",
+      "description": "Read one of a fixed set of config files.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "enum": ["./app.toml", "./app.json"] }
+        },
+        "required": ["path"]
+      }
+    }
+  ]
+}
