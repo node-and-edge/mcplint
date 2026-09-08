@@ -12,7 +12,14 @@ reading before the code.
 from pathlib import Path
 
 from mcplint.core import HIGH, LOW, MEDIUM, load_tools_from_json, run_all
-from mcplint.rules import description_outliers, injection, pinning, schema_permissiveness
+from mcplint.report import RULE_DESCRIPTIONS
+from mcplint.rules import (
+    config_hygiene,
+    description_outliers,
+    injection,
+    pinning,
+    schema_permissiveness,
+)
 from mcplint.rules import unicode_anomaly as unicode
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -27,6 +34,18 @@ EVERY_SCAN_RULE_ID = {
     schema_permissiveness.RULE_ID,
     description_outliers.RULE_ID,
     pinning.RULE_ID,
+}
+
+# Every identifier the tool can emit anywhere, read off the rule modules rather
+# than typed out again, so this cannot agree with a stale copy of itself.
+EVERY_RULE_ID = EVERY_SCAN_RULE_ID | {
+    pinning.ADDED_RULE_ID,
+    pinning.REMOVED_RULE_ID,
+    pinning.REDEFINED_RULE_ID,
+    config_hygiene.SHELL_LAUNCH_RULE_ID,
+    config_hygiene.PLAINTEXT_SECRET_RULE_ID,
+    config_hygiene.INSECURE_TRANSPORT_RULE_ID,
+    config_hygiene.NO_AUTH_RULE_ID,
 }
 
 
@@ -89,3 +108,19 @@ def test_no_rule_reports_an_identifier_outside_the_documented_set():
     for name in ("poisoned_everything.json", "poisoned_unicode.json", "shadowed_tools.json"):
         for finding in _scan(name):
             assert finding.rule_id in EVERY_SCAN_RULE_ID, finding.rule_id
+
+
+def test_every_rule_id_has_a_description_for_sarif():
+    # The other half of the check in `test_report.py`. That one asks whether
+    # each name in the table is real; this asks whether the table is missing
+    # one the code can actually produce -- which is the direction that goes
+    # wrong, because adding a rule and forgetting the table breaks nothing.
+    missing = EVERY_RULE_ID - set(RULE_DESCRIPTIONS)
+
+    assert not missing, f"rules with no SARIF description: {sorted(missing)}"
+
+
+def test_the_description_table_has_no_entries_for_rules_that_do_not_exist():
+    stale = set(RULE_DESCRIPTIONS) - EVERY_RULE_ID
+
+    assert not stale, f"descriptions for rules that no longer exist: {sorted(stale)}"

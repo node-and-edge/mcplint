@@ -1,14 +1,17 @@
 """Everything between the CLI and the rules, in one file, in data-flow order.
 
-Read it top to bottom and you have read the whole pipeline:
+Read it top to bottom and you have read most of the pipeline:
 
     load_tools_from_json()  ->  list[Tool]
     run_all()               ->  list[Finding]
-    render_text()           ->  the text a human sees
 
-The four sections below used to be four modules. They are here together
-because none of them is more than a screen long, and a reader chasing the flow
-of a scan should not have to open four files to follow it. The rules stay in
+and `report.py` turns that last list into whatever the user asked to see.
+
+These sections used to be separate modules. They are here together because
+none of them is more than a screen long, and a reader chasing the flow of a
+scan should not have to open three files to follow it. Rendering moved out
+once there was more than one output format, since a reader following a scan
+does not need to read a SARIF serialiser to understand it. The rules stay in
 their own files under `rules/` — those are the part you are meant to audit one
 at a time.
 """
@@ -63,6 +66,11 @@ class Finding:
     message: str
     evidence_snippet: str = ""
     remediation: str = ""
+    # What `tool_name` is naming. Almost always a tool, but the config rule
+    # reports on whole servers, and printing "tool: files" for a server would
+    # be a small lie in the output of a tool whose argument is that you should
+    # be able to check its output.
+    subject_kind: str = "tool"
 
 
 # ---------------------------------------------------------------------------
@@ -202,65 +210,3 @@ def run_all(tools: list[Tool]) -> list[Finding]:
     for rule in rules:
         findings.extend(rule(tools))
     return findings
-
-
-# ---------------------------------------------------------------------------
-# 4. Output
-# ---------------------------------------------------------------------------
-# Rules return data and never print; this is where that data becomes text.
-# That split is what keeps rules independently testable, and it is why "no rule
-# can make a network call" is a checkable claim rather than a promise.
-
-# Width of the rule-id column, so messages line up in the common case.
-RULE_ID_WIDTH = 20
-
-
-def render_text(findings: list[Finding], tool_count: int) -> str:
-    """Render findings grouped by tool, followed by a one-line summary."""
-    if not findings:
-        return f"No findings across {tool_count} tools."
-
-    lines: list[str] = []
-    for tool_name in _tool_order(findings):
-        lines.append(f"  tool: {visible(tool_name)}")
-        for finding in findings:
-            if finding.tool_name != tool_name:
-                continue
-            label = f"[{finding.severity}]"
-            lines.append(f"  {label:<8} {finding.rule_id:<{RULE_ID_WIDTH}} {finding.message}")
-            if finding.evidence_snippet:
-                lines.append(f"  {'':<8} {'':<{RULE_ID_WIDTH}} {finding.evidence_snippet}")
-        lines.append("")
-
-    lines.append(_summary(findings, tool_count))
-    return "\n".join(lines)
-
-
-def visible(text: str) -> str:
-    """Text with unprintable characters replaced by their codepoints.
-
-    Echoing a tool name back exactly as the server sent it would let a name
-    containing a zero-width space print as though it were clean -- in the
-    output of the tool whose entire job is to say that it is not.
-    """
-    return "".join(
-        character if character.isprintable() else f"<U+{ord(character):04X}>" for character in text
-    )
-
-
-def _tool_order(findings: list[Finding]) -> list[str]:
-    """Tool names in the order they first appear, without duplicates."""
-    seen: list[str] = []
-    for finding in findings:
-        if finding.tool_name not in seen:
-            seen.append(finding.tool_name)
-    return seen
-
-
-def _summary(findings: list[Finding], tool_count: int) -> str:
-    counts = {severity: 0 for severity in (HIGH, MEDIUM, LOW)}
-    for finding in findings:
-        counts[finding.severity] = counts.get(finding.severity, 0) + 1
-    breakdown = ", ".join(f"{counts[level]} {level.lower()}" for level in (HIGH, MEDIUM, LOW))
-    noun = "finding" if len(findings) == 1 else "findings"
-    return f"{len(findings)} {noun} across {tool_count} tools. {breakdown}."
