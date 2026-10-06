@@ -27,7 +27,7 @@ Each in its own file, each opening with a "why this rule exists" section that ex
 
 ### Three ways in
 
-- A static JSON export of a `tools/list` response.
+- A static JSON export of a `tools/list` response — the bare array, `{"tools": [...]}`, or the whole JSON-RPC message. A file with no tool list in it is an error, never a clean scan of zero tools.
 - A live server, via `--stdio-command` — mcplint runs the client handshake, reads the menu, and kills the process. It never calls a tool and never sends anything it read anywhere.
 - This machine's own MCP client configuration, via `--known-configs`. Reading a config never starts anything found in it.
 
