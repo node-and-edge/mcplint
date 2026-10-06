@@ -1,5 +1,7 @@
 # mcplint
 
+**Built by [@uditstocks](https://github.com/uditstocks)** — AI Dev Intern, [Node and Edges](https://github.com/node-and-edge)
+
 A tiny, dependency-free static linter for MCP server tool definitions. It reads the tools a server exposes and flags the obvious ways they can go wrong — hidden instructions in descriptions, invisible unicode, schemas that accept anything, tools that silently changed since last time you looked. No network calls beyond the one you were already making to list the tools. No LLM in the loop. No API key. Just text analysis you can read in one sitting.
 
 We built this because every MCP security tool we looked at was, one way or another, a platform. YARA rules plus an LLM judge plus a sandboxed dependency scan plus a dashboard plus an API key you have to trust with your tool descriptions. All of that is genuinely useful and We'd run it too. But before any of that, We wanted something we could `uv sync`, point at a `tools.json`, and have it tell me in half a second whether a description has a zero-width character hiding a prompt injection in it. That tool didn't really exist as its own thing, so here it is.
@@ -386,6 +388,12 @@ Roughly in order of "will actually get built":
 - [ ] Maybe a GitHub Action wrapper, if people ask for it
 
 Not planned, on purpose: an LLM analyzer mode, a hosted dashboard, a SaaS tier. If you want those, the tools that already do them do them well — this one's job is to stay small.
+
+## Author
+
+Built by **[@uditstocks](https://github.com/uditstocks)**, AI Dev Intern at [Node and Edges](https://github.com/node-and-edge) — all six rules, `pin` and `diff`, the stdio loader, config discovery, the text, JSON and SARIF output, the pre-commit hooks, CI, the vulnerable demo server and the test suite.
+
+Found a false negative, or a tool description that should have been caught? [Open an issue](https://github.com/node-and-edge/mcplint/issues).
 
 ## License
 
