@@ -40,6 +40,39 @@ def test_missing_file_exits_two(capsys):
     assert "could not read" in capsys.readouterr().err
 
 
+def test_a_saved_json_rpc_response_is_scanned_not_skipped(tmp_path, capsys):
+    # The whole message as it came off the wire, envelope and all. This used to
+    # parse as zero tools and exit 0 -- a clean bill of health for a file whose
+    # tools were never looked at.
+    tools = json.loads((FIXTURES / "poisoned_injection.json").read_text(encoding="utf-8"))
+    path = tmp_path / "response.json"
+    path.write_text(json.dumps({"jsonrpc": "2.0", "id": 2, "result": tools}), encoding="utf-8")
+
+    assert main(["scan", str(path)]) == EXIT_FINDINGS
+    assert "INJECTION_PHRASE" in capsys.readouterr().out
+
+
+def test_a_bare_array_of_tools_is_scanned(tmp_path, capsys):
+    tools = json.loads((FIXTURES / "poisoned_injection.json").read_text(encoding="utf-8"))
+    path = tmp_path / "tools.json"
+    path.write_text(json.dumps(tools["tools"]), encoding="utf-8")
+
+    assert main(["scan", str(path)]) == EXIT_FINDINGS
+
+
+@pytest.mark.parametrize(
+    "document",
+    [{"name": "some-package", "version": "1.0.0"}, {"jsonrpc": "2.0", "id": 2, "result": {}}],
+    ids=["an unrelated json file", "a response with no tools in it"],
+)
+def test_a_file_with_no_tool_list_is_bad_input_not_an_all_clear(tmp_path, capsys, document):
+    path = tmp_path / "tools.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert main(["scan", str(path)]) == EXIT_BAD_INPUT
+    assert "could not read" in capsys.readouterr().err
+
+
 def test_no_subcommand_is_a_usage_error():
     with pytest.raises(SystemExit):
         main([])
@@ -223,3 +256,100 @@ def test_quiet_pin_says_nothing(tmp_path, capsys):
 def test_pin_offers_no_format_flag_because_it_reports_no_findings():
     with pytest.raises(SystemExit):
         main(["pin", "tools.json", "--format", "json"])
+
+
+# --- scanning several files at once -----------------------------------------
+
+CLEAN = str(FIXTURES / "clean_tools.json")
+INJECTION = str(FIXTURES / "poisoned_injection.json")
+
+
+def test_several_files_are_scanned_in_one_run(capsys):
+    # What a pre-commit hook does: hand over every staged file that matched and
+    # expect the tool to cope.
+    exit_code = main(["scan", CLEAN, INJECTION])
+
+    assert exit_code == EXIT_FINDINGS
+    assert "INJECTION_PHRASE" in capsys.readouterr().out
+
+
+def test_findings_say_which_file_they_came_from(capsys):
+    main(["scan", CLEAN, INJECTION])
+
+    assert INJECTION in capsys.readouterr().out
+
+
+def test_a_single_file_does_not_get_a_redundant_filename(capsys):
+    # One file scanned is the common case, and repeating its name against every
+    # finding would be noise.
+    main(["scan", INJECTION])
+
+    assert f"({INJECTION})" not in capsys.readouterr().out
+
+
+def test_the_worst_file_decides_the_exit_code():
+    assert main(["scan", CLEAN, CLEAN]) == EXIT_OK
+    assert main(["scan", CLEAN, INJECTION]) == EXIT_FINDINGS
+
+
+def test_an_unreadable_file_among_readable_ones_is_still_bad_input(capsys):
+    exit_code = main(["scan", CLEAN, str(FIXTURES / "absent.json")])
+
+    assert exit_code == EXIT_BAD_INPUT
+    assert "could not read" in capsys.readouterr().err
+
+
+def test_same_named_tools_in_different_files_are_reported_separately(capsys):
+    # Both files define `read_file`. Merging them under one heading would put
+    # a finding in the wrong file, which over forty staged files is the
+    # difference between a report and a puzzle.
+    main(["scan", INJECTION, str(FIXTURES / "shadowed_tools.json")])
+
+    assert capsys.readouterr().out.count("tool: read_file") == 2
+
+
+def test_json_output_tags_each_finding_with_its_file(capsys):
+    main(["scan", CLEAN, INJECTION, "--format", "json"])
+
+    document = json.loads(capsys.readouterr().out)
+
+    assert {finding["source"] for finding in document["findings"]} == {INJECTION}
+
+
+def test_pin_refuses_more_than_one_tool_list():
+    # A baseline describes one server. Quietly pinning four of them into one
+    # file would be worse than refusing.
+    with pytest.raises(SystemExit):
+        main(["pin", CLEAN, INJECTION])
+
+
+# --- packaging surface ------------------------------------------------------
+
+
+def test_version_prints_the_package_version(capsys):
+    from mcplint import __version__
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--version"])
+
+    assert exit_info.value.code == EXIT_OK
+    assert __version__ in capsys.readouterr().out
+
+
+def test_the_package_declares_no_runtime_dependencies():
+    # The headline claim on the README's install section. It is one line in
+    # pyproject.toml and exactly the kind of line that gets edited by accident.
+    import tomllib
+
+    pyproject = Path(__file__).parent.parent / "pyproject.toml"
+    project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+
+    assert project["dependencies"] == []
+
+
+def test_the_package_ships_its_type_marker():
+    # `Typing :: Typed` in the classifiers is a promise that py.typed is in the
+    # wheel. If the file moves, the promise silently becomes false.
+    marker = Path(__file__).parent.parent / "src" / "mcplint" / "py.typed"
+
+    assert marker.exists()

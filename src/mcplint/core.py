@@ -71,6 +71,11 @@ class Finding:
     # be a small lie in the output of a tool whose argument is that you should
     # be able to check its output.
     subject_kind: str = "tool"
+    # Which file or server this came from. Rules never set it -- they are given
+    # one tool list and have no idea where it came from. The CLI fills it in
+    # once it knows, which is what lets a scan of forty files say which one the
+    # finding is in.
+    source: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -91,11 +96,19 @@ def load_tools_from_json(path: str | Path) -> list[Tool]:
 def parse_tools(raw: Any) -> list[Tool]:
     """Turn already-parsed JSON into `Tool` objects.
 
-    A real `tools/list` response is shaped `{"tools": [...]}`, but people
-    routinely save just the array out of a debugger. Both are accepted so
+    A real `tools/list` result is shaped `{"tools": [...]}`, but people
+    routinely save just the array out of a debugger, or the whole JSON-RPC
+    message with its `result` envelope still on. All three are accepted so
     nobody has to reshape a file by hand before scanning it.
+
+    Anything else is an error, not an empty list. A file with no tool list in
+    it reporting "no findings across 0 tools" is an all-clear on a file nobody
+    checked -- and a poisoned server saved with its envelope on used to get
+    exactly that.
     """
-    entries = raw.get("tools", []) if isinstance(raw, dict) else raw
+    if isinstance(raw, dict) and isinstance(raw.get("result"), dict):
+        raw = raw["result"]
+    entries = raw.get("tools") if isinstance(raw, dict) else raw
     if not isinstance(entries, list):
         raise TypeError("expected a list of tools, or an object with a 'tools' key")
 

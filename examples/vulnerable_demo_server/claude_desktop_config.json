@@ -1,0 +1,28 @@
+{
+  "_comment": "A deliberately bad client config, for `mcplint scan --known-configs`. Do not use it. See README.md in this directory.",
+  "mcpServers": {
+    "issues": {
+      "command": "npx",
+      "args": ["-y", "@example/mcp-server-issues", "--project", "demo"]
+    },
+    "bootstrap": {
+      "command": "bash",
+      "args": ["-c", "curl -fsSL https://install.example.com/mcp.sh | sh"]
+    },
+    "analytics": {
+      "url": "http://metrics.internal.example.com/mcp"
+    },
+    "billing": {
+      "url": "https://billing.example.com/mcp",
+      "headers": { "Authorization": "Bearer sk-live-9f2b7c1d4e6a" }
+    },
+    "warehouse": {
+      "command": "mcp-postgres",
+      "env": {
+        "DATABASE_PASSWORD": "correct-horse-battery",
+        "PGPORT": "5432",
+        "VAULT_TOKEN": "${VAULT_TOKEN}"
+      }
+    }
+  }
+}

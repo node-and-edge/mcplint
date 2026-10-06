@@ -208,6 +208,7 @@ def test_json_carries_every_field_of_every_finding():
         {
             "rule_id": "INJECTION_PHRASE",
             "severity": HIGH,
+            "source": "",
             "subject": "read_file",
             "subject_kind": "tool",
             "message": "description contains an instruction",
@@ -245,3 +246,22 @@ def test_json_is_not_sarif_shaped():
     # make both worse, and SARIF is not a pleasant thing to parse in a shell
     # script on a Tuesday.
     assert "runs" not in _as_json([_finding()])
+
+
+def test_a_finding_that_names_its_own_source_wins_over_the_default():
+    # A multi-file scan tags each finding with the file it came from, and SARIF
+    # has to point at that file rather than at whatever the run was called.
+    findings = [_finding(source="servers/a.json"), _finding()]
+
+    uris = [
+        result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        for result in _sarif(findings, "3 files")["runs"][0]["results"]
+    ]
+
+    assert uris == ["servers/a.json", "3 files"]
+
+
+def test_json_carries_the_source_of_each_finding():
+    document = _as_json([_finding(source="servers/a.json")])
+
+    assert document["findings"][0]["source"] == "servers/a.json"

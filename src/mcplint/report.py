@@ -36,17 +36,31 @@ from mcplint.core import HIGH, LOW, MEDIUM, Finding
 RULE_ID_WIDTH = 20
 
 
-def render_text(findings: list[Finding], subject_count: int, subject: str = "tools") -> str:
-    """Render findings grouped by subject, followed by a one-line summary."""
+def render_text(
+    findings: list[Finding],
+    subject_count: int,
+    subject: str = "tools",
+    show_source: bool = False,
+) -> str:
+    """Render findings grouped by subject, followed by a one-line summary.
+
+    `show_source` names the file each finding came from. The caller decides,
+    because only the caller knows how many files were asked for: naming it is
+    orientation across forty staged files and noise across one, and a scan of
+    two files where only one had findings still needs to say which.
+    """
     if not findings:
         return f"No findings across {subject_count} {subject}."
 
     lines: list[str] = []
-    for tool_name in _subject_order(findings):
-        kind = next(f.subject_kind for f in findings if f.tool_name == tool_name)
-        lines.append(f"  {kind}: {visible(tool_name)}")
+    for source, tool_name in _subject_order(findings):
+        kind = next(
+            f.subject_kind for f in findings if (f.source, f.tool_name) == (source, tool_name)
+        )
+        where = f"  ({source})" if source and show_source else ""
+        lines.append(f"  {kind}: {visible(tool_name)}{where}")
         for finding in findings:
-            if finding.tool_name != tool_name:
+            if (finding.source, finding.tool_name) != (source, tool_name):
                 continue
             label = f"[{finding.severity}]"
             lines.append(f"  {label:<8} {finding.rule_id:<{RULE_ID_WIDTH}} {finding.message}")
@@ -70,12 +84,19 @@ def visible(text: str) -> str:
     )
 
 
-def _subject_order(findings: list[Finding]) -> list[str]:
-    """Subject names in the order they first appear, without duplicates."""
-    seen: list[str] = []
+def _subject_order(findings: list[Finding]) -> list[tuple[str, str]]:
+    """Subjects in the order they first appear, without duplicates.
+
+    Keyed by source as well as name. Two files can each define a `read_file`,
+    and merging them under one heading would report a problem in the wrong
+    file -- which on a pre-commit hook over forty staged files is the
+    difference between an actionable report and a puzzle.
+    """
+    seen: list[tuple[str, str]] = []
     for finding in findings:
-        if finding.tool_name not in seen:
-            seen.append(finding.tool_name)
+        key = (finding.source, finding.tool_name)
+        if key not in seen:
+            seen.append(key)
     return seen
 
 
@@ -125,7 +146,12 @@ RULE_DESCRIPTIONS = {
 
 
 def render_sarif(findings: list[Finding], source: str) -> str:
-    """Render findings as SARIF 2.1.0, for GitHub code scanning and friends."""
+    """Render findings as SARIF 2.1.0, for GitHub code scanning and friends.
+
+    `source` is the fallback for findings that do not name their own. One run
+    can hold results from several artifacts, which is how a scan of forty files
+    stays one document rather than forty.
+    """
     document = {
         "$schema": SARIF_SCHEMA,
         "version": SARIF_VERSION,
@@ -139,7 +165,9 @@ def render_sarif(findings: list[Finding], source: str) -> str:
                         "rules": _rule_descriptors(findings),
                     }
                 },
-                "results": [_sarif_result(finding, source) for finding in findings],
+                "results": [
+                    _sarif_result(finding, finding.source or source) for finding in findings
+                ],
             }
         ],
     }
@@ -247,6 +275,7 @@ def render_json(findings: list[Finding], subject_count: int, subject: str = "too
             {
                 "rule_id": finding.rule_id,
                 "severity": finding.severity,
+                "source": finding.source,
                 "subject": finding.tool_name,
                 "subject_kind": finding.subject_kind,
                 "message": finding.message,

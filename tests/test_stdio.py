@@ -146,6 +146,16 @@ def test_a_failing_server_is_bad_input_not_a_traceback(capsys):
     assert "mcplint:" in capsys.readouterr().err
 
 
+def test_a_server_with_no_tool_list_in_its_answer_is_bad_input(capsys):
+    # Answering tools/list with `{}` is not "this server has no tools", which
+    # would be `{"tools": []}`. Reporting it as a clean scan would be wrong;
+    # crashing on it with a traceback would be worse.
+    exit_code = main(["scan", *_cli_source("shapeless")])
+
+    assert exit_code == EXIT_BAD_INPUT
+    assert "without a tool list" in capsys.readouterr().err
+
+
 def test_a_path_and_a_command_together_is_a_usage_error():
     with pytest.raises(SystemExit):
         main(["scan", "tools.json", "--stdio-command", "anything"])
@@ -156,9 +166,27 @@ def test_neither_a_path_nor_a_command_is_a_usage_error():
         main(["scan"])
 
 
-def test_a_stray_stdio_arg_is_a_usage_error():
+def test_a_stray_stdio_arg_is_a_usage_error(capsys):
     with pytest.raises(SystemExit):
         main(["scan", "tools.json", "--stdio-arg", "-y"])
+
+    assert "nothing to attach to" in capsys.readouterr().err
+
+
+def test_a_stdio_arg_may_start_with_a_dash(capsys):
+    # `npx -y some-server` is how nearly every MCP server says to launch it, and
+    # the README's own example passes `--stdio-arg -y`. argparse alone reads that
+    # `-y` as a new flag rather than as the value, and the scan never starts.
+    source = ["--stdio-command", sys.executable, "--stdio-arg", "-u"]
+    source += ["--stdio-arg", SERVER, "--stdio-arg", "clean"]
+
+    assert main(["scan", *source]) == EXIT_OK
+    assert "No findings" in capsys.readouterr().out
+
+
+def test_a_trailing_stdio_arg_with_no_value_is_still_a_usage_error():
+    with pytest.raises(SystemExit):
+        main(["scan", "--stdio-command", sys.executable, "--stdio-arg"])
 
 
 # --- pin and diff over stdio ------------------------------------------------

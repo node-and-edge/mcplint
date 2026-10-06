@@ -1,0 +1,96 @@
+# The pipeline that makes the developer guide's definition of done enforceable
+# rather than aspirational: ruff, formatting and the full test suite on every
+# push and every pull request.
+#
+# Windows is in the matrix on purpose, not for completeness. Two of the bugs
+# this project has actually shipped were Windows-only -- printing a Cyrillic
+# tool name to a cp1252 console raised UnicodeEncodeError and killed the scan
+# on the very finding it existed to report, and a pipe-shutdown deadlock hung
+# the stdio loader forever. Neither reproduces on Linux. A tool whose whole
+# subject is strange characters and subprocesses cannot be tested on one
+# platform.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        # --frozen fails if uv.lock is out of date with pyproject.toml, which
+        # catches the pull request that edits one and forgets the other.
+        run: uv sync --frozen
+
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  test:
+    name: test (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One failing combination should not hide the others -- knowing it broke
+      # only on 3.11, or only on Windows, is most of the diagnosis.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          # The oldest and newest supported versions on Windows, where the
+          # console encoding and the pipe semantics differ, and the newest on
+          # macOS for the config-discovery paths.
+          - os: windows-latest
+            python: "3.11"
+          - os: windows-latest
+            python: "3.14"
+          - os: macos-latest
+            python: "3.14"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run the test suite
+        run: uv run pytest -q
+
+      - name: Scan the vulnerable demo server
+        # Dogfooding, and a check that the packaged entry point works rather
+        # than only the importable code. The demo is meant to fail a scan, so
+        # a zero here means the tool stopped finding things.
+        shell: bash
+        run: |
+          uv run mcplint scan examples/vulnerable_demo_server/tools.json --quiet && {
+            echo "the demo server scanned clean, which means a rule stopped firing"
+            exit 1
+          }
+          echo "demo server reported findings, as it should"
+
+      - name: Scan this repository's own tool lists
+        # There are none, which is the point: the command has to work and exit
+        # zero when there is nothing to find.
+        run: uv run mcplint scan tests/fixtures/clean_tools.json
