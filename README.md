@@ -16,7 +16,7 @@ So a tool description can just... contain an instruction. Hidden in whitespace. 
 
 ## Status
 
-Everything described below works. Six rules, three subcommands, three input paths, three output formats.
+Everything described below works. Six rules, three subcommands, three input paths, three output formats, two pre-commit hooks — and 222 tests passing on Python 3.11 to 3.14 ([Tested](#tested) has the breakdown).
 
 `scan`, `pin` and `diff` read either a JSON file or a live server over stdio. `scan --known-configs` reads the MCP clients configured on this machine instead. Findings print as text, JSON or SARIF, and the exit code is a flag rather than a constant.
 
@@ -50,11 +50,92 @@ That's it. That's the whole tool. Everything else — the stdio handshake, SARIF
 
 ## Install
 
+Needs Python 3.11 or newer, and nothing else — zero dependencies beyond the standard library.
+
+It's a command-line tool, so install it as one:
+
 ```bash
-uv add mcplint
+uv tool install mcplint      # or: pipx install mcplint
 ```
 
-Zero required dependencies beyond the Python standard library.
+Or run it once without installing anything:
+
+```bash
+uvx mcplint scan tools.json
+```
+
+To pin a version as a dev dependency of a project that ships an MCP server:
+
+```bash
+uv add --dev mcplint
+```
+
+Straight from GitHub, for a commit that isn't on PyPI yet:
+
+```bash
+uv tool install git+https://github.com/node-and-edge/mcplint
+```
+
+Or from a checkout, if you want to read or change the rules — which is rather the point:
+
+```bash
+git clone https://github.com/node-and-edge/mcplint
+cd mcplint
+uv sync
+uv run mcplint --version
+```
+
+`mcplint --version` should print `mcplint 0.1.0`.
+
+## Quick start
+
+From nothing to a check that fails your build, in six steps.
+
+**1. Watch it catch something.** Download the deliberately poisoned tool list from this repo and scan it:
+
+```bash
+curl -LO https://raw.githubusercontent.com/node-and-edge/mcplint/main/examples/vulnerable_demo_server/tools.json
+mcplint scan tools.json
+```
+
+Nine findings and exit code `1`. [Seeing it work](#seeing-it-work) explains what each one is.
+
+**2. Scan your own server.** If it runs over stdio, let mcplint start it and ask for its tools. Give the launch command exactly as your MCP client config has it — the `command` first, then one `--stdio-arg` per entry in `args`:
+
+```bash
+mcplint scan --stdio-command npx --stdio-arg -y --stdio-arg @your-org/your-mcp-server
+```
+
+mcplint runs the handshake, reads the tool list, and stops the server. It never calls a tool.
+
+If you have the tool list saved as JSON instead, scan the file. Any of the three shapes it comes in works: a bare array of tools, `{"tools": [...]}`, or the whole JSON-RPC `tools/list` response with its envelope on.
+
+**3. Check your MCP client configs.**
+
+```bash
+mcplint scan --known-configs
+```
+
+This reads the Claude Desktop, Claude Code, Cursor, VS Code and Windsurf configs on this machine and reports servers launched through a shell, credentials written into the file, and servers reached over plain HTTP. It never starts anything it finds.
+
+**4. Read the result.** Findings are grouped by tool (or by server, for configs). Each one gives a severity, a rule ID and what's wrong, with the evidence on the line underneath — the offending text, with invisible characters spelled out as codepoints like `<U+200B>` so you can see them. The last line counts findings by severity, and the exit code is the verdict: `0` clean, `1` at least one finding at MEDIUM or above, `2` the input couldn't be read.
+
+For what to do about each finding, ask for JSON — every finding carries a `remediation`:
+
+```bash
+mcplint scan tools.json --format json
+```
+
+**5. Pin it, so you notice when it changes.** A server that was clean on the day you reviewed it can redefine a tool tomorrow, under the same name:
+
+```bash
+mcplint pin  tools.json    # writes tools.mcplint.json beside it -- commit that file
+mcplint diff tools.json    # later: reports TOOL_ADDED, TOOL_REMOVED, TOOL_REDEFINED
+```
+
+**6. Make it a gate.** Run it in CI or as a pre-commit hook, so a poisoned description fails the build instead of reaching a model — [Running it in CI, or before a commit](#running-it-in-ci-or-before-a-commit) has both. Adding it to an existing project? Start with `--fail-on never`, read the report, and tighten the threshold once you've dealt with what it found.
+
+Everything below is the reference for each of those steps.
 
 ## Usage
 
@@ -143,7 +224,7 @@ $ mcplint scan tests/fixtures/poisoned_everything.json
 6 findings across 9 tools. 4 high, 1 medium, 1 low.
 ```
 
-And a config with the usual problems in it:
+And a config with the usual problems in it (the file path at the end of each line is shortened here; a real run prints the full path):
 
 ```
 $ mcplint scan --known-configs
@@ -226,6 +307,24 @@ It's inert. Every payload is text in a description field, and `server.py` does n
 
 ## Running it in CI, or before a commit
 
+In CI, the exit code is all you need — a finding at or above the threshold fails the job. For GitHub Actions:
+
+```yaml
+# .github/workflows/mcplint.yml
+name: mcplint
+on: [push, pull_request]
+
+jobs:
+  mcplint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx mcplint scan tools.json
+```
+
+Before a commit, as a [pre-commit](https://pre-commit.com) hook:
+
 ```yaml
 # .pre-commit-config.yaml
 repos:
@@ -236,6 +335,38 @@ repos:
 ```
 
 The point of the hook rather than a CI step is timing. A poisoned description that reaches CI has already been pushed, and on a repo that publishes an MCP server it may already be deployed.
+
+The `mcplint` hook scans staged files named `tools.json`, `mcp-tools.json` or `tool-definitions.json` (or `tool_definitions.json`), in any directory. A second hook, `mcplint-known-configs`, checks this machine's MCP client configs on every commit instead.
+
+## Tested
+
+Where 0.1.0 stands, checked on 2026-10-06. Run `uv run pytest` in a checkout to reproduce the first row.
+
+| Check | Result |
+|---|---|
+| Automated tests (`pytest`) | **222 of 222 pass** on Python 3.11, 3.12, 3.13 and 3.14 |
+| Lint and formatting (`ruff check`, `ruff format --check`) | Clean |
+| The installed package | Built with `uv build`, installed into a fresh environment outside the repository, and every command in this README run against it — including both example outputs above, which match a real run line for line apart from the shortened file paths |
+| Pre-commit hooks | Run through `pre-commit try-repo`: a clean tool list passes, a poisoned one blocks the commit, unrelated JSON files are skipped |
+| CI | [`ci.yml`](.github/workflows/ci.yml) runs the suite on Linux, Windows and macOS on every push and pull request, and fails if the demo server ever scans clean |
+
+What the 222 tests cover:
+
+| Area | Tests |
+|---|---|
+| Output formats: text, JSON, SARIF 2.1.0 | 38 |
+| Command line: flags, exit codes, input shapes, several files in one run | 38 |
+| Config hygiene rule | 25 |
+| Live servers over stdio: the handshake, crashes, hangs and timeouts | 23 |
+| Rug-pull detection: `pin`, `diff` and shadowed tool names | 22 |
+| Config discovery across clients and platforms | 16 |
+| Schema permissiveness rule | 15 |
+| Description outlier rule | 13 |
+| Unicode anomaly rule | 11 |
+| The vulnerable demo server, end to end | 9 |
+| Rule registry: every rule wired in, every fixture tripping only its own rule | 8 |
+| Injection phrase rule | 4 |
+| **Total** | **222** |
 
 ## Contributing
 
