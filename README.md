@@ -20,11 +20,11 @@ Everything described below works. Six rules, three subcommands, three input path
 
 `scan`, `pin` and `diff` read either a JSON file or a live server over stdio. `scan --known-configs` reads the MCP clients configured on this machine instead. Findings print as text, JSON or SARIF, and the exit code is a flag rather than a constant.
 
-Not yet built: pre-commit hook mode, and a GitHub Action wrapper. Those are in the roadmap at the bottom, as intent rather than fact.
+Not yet built: a GitHub Action wrapper. That's in the roadmap at the bottom, as intent rather than fact.
 
 ## What it actually checks
 
-Six checks, each in its own file, each doing exactly one thing. Every rule file opens with a "why this rule exists" section explaining the attack — if you only read one thing in this repo, read those five.
+Six checks, each in its own file, each doing exactly one thing. Every rule file opens with a "why this rule exists" section explaining the attack — if you only read one thing in this repo, read those six.
 
 | File | Rule IDs | Severity | What it catches |
 |---|---|---|---|
