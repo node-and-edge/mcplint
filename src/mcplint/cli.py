@@ -194,7 +194,7 @@ def _add_baseline_argument(subcommand: argparse.ArgumentParser) -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run a subcommand and return the process exit code."""
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(_bind_stdio_args(sys.argv[1:] if argv is None else argv))
     _widen_output_encoding()
     _check_source(parser, args)
 
@@ -218,6 +218,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "diff":
         return _diff(tools, args, parser)
     return _report(run_all(tools), len(tools), args)
+
+
+def _bind_stdio_args(argv: list[str]) -> list[str]:
+    """Join each `--stdio-arg` to the word after it, so that word may start with a dash.
+
+    argparse reads `--stdio-arg -y` as a flag with its value missing, followed by
+    an option it has never heard of -- and `npx -y some-server` is the launch line
+    nearly every MCP server's README gives. `--stdio-arg=-y` is the spelling
+    argparse accepts, so that is what this hands it. A trailing `--stdio-arg`
+    with nothing after it is left alone, for argparse to complain about.
+    """
+    bound: list[str] = []
+    words = iter(argv)
+    for word in words:
+        value = next(words, None) if word == "--stdio-arg" else None
+        bound.append(word if value is None else f"{word}={value}")
+    return bound
 
 
 def _scan_each(args: argparse.Namespace) -> int:
