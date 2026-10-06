@@ -5,12 +5,13 @@ loader is exercised the way it will be used rather than against a mock of a
 pipe. It takes a mode argument so one file can play every server worth testing
 against, including the badly behaved ones:
 
-    clean    answers the handshake and returns a tidy tool list
-    poisoned answers the handshake and returns a tool list full of problems
-    noisy    prints log lines to stdout before answering, as real servers do
-    error    answers `initialize`, then refuses `tools/list`
-    crash    writes a complaint to stderr and exits without answering
-    hang     answers nothing at all, ever
+    clean     answers the handshake and returns a tidy tool list
+    poisoned  answers the handshake and returns a tool list full of problems
+    noisy     prints log lines to stdout before answering, as real servers do
+    error     answers `initialize`, then refuses `tools/list`
+    shapeless answers `tools/list` with a result that holds no tool list
+    crash     writes a complaint to stderr and exits without answering
+    hang      answers nothing at all, ever
 
 No network, no dependencies. Run it by hand to see what the loader sees:
 
@@ -30,6 +31,7 @@ TOOL_LISTS = {
     "poisoned": "poisoned_everything.json",
     "noisy": "clean_tools.json",
     "error": "clean_tools.json",
+    "shapeless": "clean_tools.json",
 }
 
 
@@ -90,6 +92,8 @@ def main():
                         "error": {"code": -32601, "message": "tools are not enumerable"},
                     }
                 )
+            elif mode == "shapeless":
+                send(result(request["id"], {}))
             else:
                 send(result(request["id"], tools))
 

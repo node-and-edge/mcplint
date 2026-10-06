@@ -40,6 +40,39 @@ def test_missing_file_exits_two(capsys):
     assert "could not read" in capsys.readouterr().err
 
 
+def test_a_saved_json_rpc_response_is_scanned_not_skipped(tmp_path, capsys):
+    # The whole message as it came off the wire, envelope and all. This used to
+    # parse as zero tools and exit 0 -- a clean bill of health for a file whose
+    # tools were never looked at.
+    tools = json.loads((FIXTURES / "poisoned_injection.json").read_text(encoding="utf-8"))
+    path = tmp_path / "response.json"
+    path.write_text(json.dumps({"jsonrpc": "2.0", "id": 2, "result": tools}), encoding="utf-8")
+
+    assert main(["scan", str(path)]) == EXIT_FINDINGS
+    assert "INJECTION_PHRASE" in capsys.readouterr().out
+
+
+def test_a_bare_array_of_tools_is_scanned(tmp_path, capsys):
+    tools = json.loads((FIXTURES / "poisoned_injection.json").read_text(encoding="utf-8"))
+    path = tmp_path / "tools.json"
+    path.write_text(json.dumps(tools["tools"]), encoding="utf-8")
+
+    assert main(["scan", str(path)]) == EXIT_FINDINGS
+
+
+@pytest.mark.parametrize(
+    "document",
+    [{"name": "some-package", "version": "1.0.0"}, {"jsonrpc": "2.0", "id": 2, "result": {}}],
+    ids=["an unrelated json file", "a response with no tools in it"],
+)
+def test_a_file_with_no_tool_list_is_bad_input_not_an_all_clear(tmp_path, capsys, document):
+    path = tmp_path / "tools.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert main(["scan", str(path)]) == EXIT_BAD_INPUT
+    assert "could not read" in capsys.readouterr().err
+
+
 def test_no_subcommand_is_a_usage_error():
     with pytest.raises(SystemExit):
         main([])

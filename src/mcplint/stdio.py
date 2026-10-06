@@ -90,7 +90,10 @@ def load_tools_from_stdio(
     finally:
         _stop(process)
 
-    return parse_tools(result)
+    try:
+        return parse_tools(result)
+    except TypeError as error:
+        raise StdioError(f"server answered tools/list without a tool list: {error}") from error
 
 
 def _handshake(process: subprocess.Popen, timeout: float) -> Any:

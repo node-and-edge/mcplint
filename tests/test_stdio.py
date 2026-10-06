@@ -146,6 +146,16 @@ def test_a_failing_server_is_bad_input_not_a_traceback(capsys):
     assert "mcplint:" in capsys.readouterr().err
 
 
+def test_a_server_with_no_tool_list_in_its_answer_is_bad_input(capsys):
+    # Answering tools/list with `{}` is not "this server has no tools", which
+    # would be `{"tools": []}`. Reporting it as a clean scan would be wrong;
+    # crashing on it with a traceback would be worse.
+    exit_code = main(["scan", *_cli_source("shapeless")])
+
+    assert exit_code == EXIT_BAD_INPUT
+    assert "without a tool list" in capsys.readouterr().err
+
+
 def test_a_path_and_a_command_together_is_a_usage_error():
     with pytest.raises(SystemExit):
         main(["scan", "tools.json", "--stdio-command", "anything"])
